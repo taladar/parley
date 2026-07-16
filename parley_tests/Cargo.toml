@@ -25,6 +25,8 @@ glifo = { workspace = true, features = ["std", "vello_cpu", "png"] }
 peniko = { workspace = true, features = ["std"] }
 vello_cpu = { workspace = true, features = ["std", "png"] }
 fontique = { workspace = true, features = ["std"] }
+icu_properties = { workspace = true, features = ["compiled_data"] }
+icu_segmenter = { workspace = true, features = ["compiled_data"] }
 taffy = { version = "0.10", default-features = false, features = ["std", "float_layout"] }
 
 [target.'cfg(not(target_os = "android"))'.dependencies]

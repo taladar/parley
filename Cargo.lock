@@ -2985,6 +2985,8 @@ version = "0.0.0"
 dependencies = [
  "fontique",
  "glifo",
+ "icu_properties",
+ "icu_segmenter",
  "oxipng",
  "parley",
  "parley_dev",
