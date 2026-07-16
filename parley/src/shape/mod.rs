@@ -11,7 +11,9 @@ use core::ops::RangeInclusive;
 use super::layout::Layout;
 use super::resolve::{ResolveContext, Resolved, ResolvedStyle};
 use super::style::{Brush, FontFeature, FontVariation};
-use crate::analysis::cluster::{Char, CharCluster, Status};
+use crate::analysis::cluster::{
+    Char, CharCluster, EMOJI_PRESENTATION_SELECTOR, Presentation, Status, TEXT_PRESENTATION_SELECTOR,
+};
 use crate::analysis::{AnalysisDataSources, CharInfo};
 use crate::convert::script_to_harfrust;
 use crate::inline_box::InlineBox;
@@ -235,6 +237,7 @@ fn fill_cluster_in_place(
 
     let mut force_normalize = false;
     let mut is_emoji_or_pictograph = false;
+    let mut presentation = Presentation::Unspecified;
     let mut map_len: u8 = 0;
     let start = *code_unit_offset_in_string as u32;
 
@@ -247,7 +250,25 @@ fn fill_cluster_in_place(
         is_emoji_or_pictograph |= info.is_emoji_or_pictograph();
         *code_unit_offset_in_string += ch.len_utf8();
 
-        let contributes_to_shaping = info.contributes_to_shaping();
+        // Which presentation, if either, the sequence explicitly asks for.
+        match ch {
+            EMOJI_PRESENTATION_SELECTOR => presentation = Presentation::Emoji,
+            TEXT_PRESENTATION_SELECTOR => presentation = Presentation::Text,
+            _ => {}
+        }
+
+        // If the color emoji has a non-printing variation selector, ignore the variation selector.
+        // Its presentation depends on the platform and font.
+        //
+        // Backported from upstream 0.10.0 (linebender/parley#685): without this, a variation
+        // selector is required to be in the font's `cmap` for the font to count as a complete
+        // match, and no emoji font maps `U+FE0F` — so `[U+2764, U+FE0F]` maps 1 of 2 and the
+        // emoji font is rejected outright.
+        let is_emoji_with_non_printing_variation_selector =
+            is_emoji_or_pictograph && info.is_variation_selector();
+
+        let contributes_to_shaping =
+            info.contributes_to_shaping() && !is_emoji_with_non_printing_variation_selector;
         if contributes_to_shaping {
             map_len += 1;
         }
@@ -264,6 +285,7 @@ fn fill_cluster_in_place(
     // Finalize cluster metadata
     let end = *code_unit_offset_in_string as u32;
     char_cluster.is_emoji = is_emoji_or_pictograph;
+    char_cluster.presentation = presentation;
     char_cluster.map_len = map_len;
     char_cluster.start = start;
     char_cluster.end = end;
@@ -565,7 +587,23 @@ impl<'a, 'b, B: Brush> FontSelector<'a, 'b, B> {
             if is_emoji {
                 use core::iter::once;
                 let emoji_family = QueryFamily::Generic(fontique::GenericFamily::Emoji);
-                self.query.set_families(fonts.chain(once(emoji_family)));
+                // The emoji family normally goes *after* the requested families:
+                // `is_emoji` covers every Emoji/Extended_Pictographic codepoint,
+                // including ones whose default presentation is text (`5`, `#`,
+                // `▶`), so trying it first would render those as emoji.
+                //
+                // A cluster carrying `U+FE0F` (VS16) is the exception: per
+                // UTS #51 it explicitly requests the emoji presentation, and must
+                // get it even when a text font in the requested families happens
+                // to cover the base codepoint as a dingbat — which is exactly the
+                // case for `U+2764` + VS16 (`❤️`) in fonts like DejaVu Sans or
+                // Inter. `U+FE0E` (VS15) asks for the opposite and so keeps the
+                // default ordering.
+                if cluster.presentation == Presentation::Emoji {
+                    self.query.set_families(once(emoji_family).chain(fonts));
+                } else {
+                    self.query.set_families(fonts.chain(once(emoji_family)));
+                }
                 self.fonts_id = None;
             } else if self.fonts_id != Some(fonts_id) {
                 self.query.set_families(fonts);

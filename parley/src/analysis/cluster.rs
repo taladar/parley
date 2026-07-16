@@ -9,10 +9,33 @@ use crate::analysis::AnalysisDataSources;
 /// The maximum number of characters in a single cluster.
 const MAX_CLUSTER_SIZE: usize = 32;
 
+/// `U+FE0E` VARIATION SELECTOR-15, which requests the text presentation of the
+/// preceding codepoint.
+pub(crate) const TEXT_PRESENTATION_SELECTOR: char = '\u{FE0E}';
+
+/// `U+FE0F` VARIATION SELECTOR-16, which requests the emoji presentation of the
+/// preceding codepoint.
+pub(crate) const EMOJI_PRESENTATION_SELECTOR: char = '\u{FE0F}';
+
+/// The glyph presentation a cluster explicitly asks for with a variation
+/// selector, per UTS #51.
+#[derive(Copy, Clone, PartialEq, Eq, Debug, Default)]
+pub(crate) enum Presentation {
+    /// No variation selector: presentation is left to the codepoint's default
+    /// and to which fonts happen to cover it.
+    #[default]
+    Unspecified,
+    /// `U+FE0E` (VS15) requests the *text* presentation.
+    Text,
+    /// `U+FE0F` (VS16) requests the *emoji* presentation.
+    Emoji,
+}
+
 #[derive(Debug, Default)]
 pub(crate) struct CharCluster {
     pub chars: Vec<Char>,
     pub is_emoji: bool,
+    pub presentation: Presentation,
     pub map_len: u8,
     pub start: u32,
     pub end: u32,
@@ -94,6 +117,7 @@ impl CharCluster {
     pub(crate) fn clear(&mut self) {
         self.chars.clear();
         self.is_emoji = false;
+        self.presentation = Presentation::Unspecified;
         self.map_len = 0;
         self.start = 0;
         self.end = 0;

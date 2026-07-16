@@ -22,6 +22,39 @@ use crate::layout::LayoutAccessibility;
 #[cfg(feature = "accesskit")]
 use accesskit::{Node, NodeId, TreeUpdate};
 
+/// The byte offset of the last grapheme-cluster boundary strictly before the end
+/// of `text`, i.e. the start of the grapheme a backspace at the end should
+/// remove. Returns `None` for empty text.
+fn previous_grapheme_boundary<B: Brush>(
+    layout_cx: &LayoutContext<B>,
+    text: &str,
+) -> Option<usize> {
+    if text.is_empty() {
+        return None;
+    }
+    layout_cx
+        .analysis_data_sources
+        .grapheme_segmenter()
+        .segment_str(text)
+        .take_while(|boundary| *boundary < text.len())
+        .last()
+}
+
+/// The byte offset of the first grapheme-cluster boundary strictly after `from`
+/// in `text`, i.e. the end of the grapheme a forward delete at `from` should
+/// remove. Returns `None` at the end of the text.
+fn next_grapheme_boundary<B: Brush>(
+    layout_cx: &LayoutContext<B>,
+    text: &str,
+    from: usize,
+) -> Option<usize> {
+    layout_cx
+        .analysis_data_sources
+        .grapheme_segmenter()
+        .segment_str(text)
+        .find(|boundary| *boundary > from)
+}
+
 /// Opaque representation of a generation.
 ///
 /// Obtained from [`PlainEditor::generation`].
@@ -243,16 +276,10 @@ where
     /// Delete the selection or the next cluster (typical ‘delete’ behavior).
     pub fn delete(&mut self) {
         if self.editor.selection.is_collapsed() {
-            // Upstream cluster range
-            if let Some(range) = self
-                .editor
-                .selection
-                .focus()
-                .logical_clusters(&self.editor.layout)[1]
-                .as_ref()
-                .map(|cluster| cluster.text_range())
-                .and_then(|range| (!range.is_empty()).then_some(range))
-            {
+            // Delete one grapheme cluster forward, mirroring `backdelete`.
+            let start = self.editor.selection.focus().index();
+            if let Some(end) = next_grapheme_boundary(self.layout_cx, &self.editor.buffer, start) {
+                let range = start..end;
                 self.editor.buffer.replace_range(range.clone(), "");
                 self.editor.update_compose_for_replaced_range(range, 0);
                 self.update_layout();
@@ -295,20 +322,16 @@ where
             {
                 let range = cluster.text_range();
                 let end = range.end;
-                let start = if cluster.is_hard_line_break() || cluster.is_emoji() {
-                    // For newline sequences and emoji, delete the previous cluster
-                    range.start
-                } else {
-                    // Otherwise, delete the previous character
-                    let Some((start, _)) = self
-                        .editor
-                        .buffer
-                        .get(..end)
-                        .and_then(|str| str.char_indices().next_back())
-                    else {
-                        return;
-                    };
-                    start
+                // Delete one *grapheme cluster* — the unit a reader perceives as
+                // a character. Deleting one `char` peels a grapheme apart one
+                // codepoint at a time.
+                let Some(start) = self
+                    .editor
+                    .buffer
+                    .get(..end)
+                    .and_then(|text| previous_grapheme_boundary(self.layout_cx, text))
+                else {
+                    return;
                 };
                 self.editor.buffer.replace_range(start..end, "");
                 self.editor.update_compose_for_replaced_range(start..end, 0);
