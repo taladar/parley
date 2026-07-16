@@ -28,12 +28,15 @@
 //!   text ranges are font-invariant.
 //! - [`reference`] — the independent ICU oracle.
 //! - [`tables`] — the generated behavior tables. Every cell is emitted by running code.
+//! - [`findings`] — automated detectors over the measurements; their output is a golden, so a
+//!   known defect is a visible row and a new one turns CI red.
 //! - [`expectations`] — what the authorities say, as data with verbatim citations.
 //!   `EXPECTATIONS.md` alongside it carries the prose research.
 
 mod corpus;
 mod env;
 mod expectations;
+mod findings;
 mod measure;
 mod ops;
 mod probe;

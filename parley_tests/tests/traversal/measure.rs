@@ -461,23 +461,27 @@ fn state_key(editor: &PlainEditor<ColorBrush>) -> (String, usize, usize, bool) {
 ///
 /// Returns the byte offset and the removed text. Computed rather than narrated: an operation that
 /// claims to delete one thing and deletes another is exactly what this harness exists to catch.
+/// Compared char-wise rather than byte-wise, deliberately. A byte-wise common prefix lands inside a
+/// character whenever two different ones share a lead byte — `U+0301` and `U+0308` both start
+/// `0xCC` — and then slicing panics. The corpus caught this on `e` + acute + diaeresis.
 fn diff_removal(before: &str, after: &str) -> (usize, String) {
     if before == after {
         return (0, String::new());
     }
-    let prefix = before
-        .bytes()
-        .zip(after.bytes())
+    let prefix: usize = before
+        .chars()
+        .zip(after.chars())
         .take_while(|(a, b)| a == b)
-        .count();
-    let max_suffix = (before.len() - prefix).min(after.len() - prefix);
-    let suffix = before
-        .bytes()
+        .map(|(c, _)| c.len_utf8())
+        .sum();
+    // Search the suffix only in what the prefix did not already claim, so the two cannot overlap.
+    let suffix: usize = before[prefix..]
+        .chars()
         .rev()
-        .zip(after.bytes().rev())
+        .zip(after[prefix..].chars().rev())
         .take_while(|(a, b)| a == b)
-        .count()
-        .min(max_suffix);
+        .map(|(c, _)| c.len_utf8())
+        .sum();
     let removed = &before[prefix..before.len() - suffix];
     (prefix, removed.to_string())
 }
