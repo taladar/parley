@@ -30,7 +30,10 @@
 use std::borrow::Cow;
 
 use fontique::{Collection, CollectionOptions, SourceCache};
-use parley::{FontContext, FontFamily, FontFamilyName, LayoutContext, StyleProperty};
+use parley::{
+    FontContext, FontFamily, FontFamilyName, LayoutContext, PlainEditor, PlainEditorDriver,
+    StyleProperty,
+};
 
 use crate::util::ColorBrush;
 use crate::util::env::load_fonts;
@@ -121,6 +124,31 @@ impl TraversalEnv {
             font_cx: tier.font_context(),
             layout_cx: LayoutContext::new(),
         }
+    }
+
+    /// An editor holding `text`, styled with this tier's font family.
+    ///
+    /// Pushing the family matters for the same reason it does in [`Self::layout`]: without it no
+    /// font resolves and the editor has no clusters, so every operation becomes a silent no-op.
+    pub(crate) fn editor(&self, text: &str) -> PlainEditor<ColorBrush> {
+        let mut editor = PlainEditor::new(16.0);
+        editor
+            .edit_styles()
+            .insert(StyleProperty::FontFamily(FontFamily::List(Cow::Borrowed(
+                self.tier.families(),
+            ))));
+        editor
+            .edit_styles()
+            .insert(StyleProperty::Brush(ColorBrush::default()));
+        editor.set_text(text);
+        editor
+    }
+
+    pub(crate) fn driver<'a>(
+        &'a mut self,
+        editor: &'a mut PlainEditor<ColorBrush>,
+    ) -> PlainEditorDriver<'a, ColorBrush> {
+        editor.driver(&mut self.font_cx, &mut self.layout_cx)
     }
 
     /// Lays out `text` with this tier's font family, breaking only at hard line breaks.

@@ -22,10 +22,12 @@
 //! - [`corpus`] — the text sequences under measurement, as `\u{...}` escapes.
 //! - [`env`] — font tiers; the harness composes its own collections rather than using the
 //!   shared `create_font_context`, so it can vary font availability deliberately.
-//! - [`measure`] — observation primitives over a built `Layout`.
+//! - [`measure`] — observation primitives over a built `Layout` and `PlainEditor`.
+//! - [`ops`] — the traversal operations under measurement, as data.
 //! - [`probe`] — establishes what the rest of the harness may assume, notably whether cluster
 //!   text ranges are font-invariant.
 //! - [`reference`] — the independent ICU oracle.
+//! - [`tables`] — the generated behavior tables. Every cell is emitted by running code.
 //! - [`expectations`] — what the authorities say, as data with verbatim citations.
 //!   `EXPECTATIONS.md` alongside it carries the prose research.
 
@@ -33,5 +35,7 @@ mod corpus;
 mod env;
 mod expectations;
 mod measure;
+mod ops;
 mod probe;
 mod reference;
+mod tables;
