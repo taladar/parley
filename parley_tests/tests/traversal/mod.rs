@@ -19,7 +19,9 @@
 //!
 //! # Layout
 //!
+//! - [`corpus`] — the text sequences under measurement, as `\u{...}` escapes.
 //! - [`expectations`] — what the authorities say, as data with verbatim citations.
 //!   `EXPECTATIONS.md` alongside it carries the prose research.
 
+mod corpus;
 mod expectations;

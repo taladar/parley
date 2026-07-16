@@ -331,6 +331,45 @@ impl TestEnv {
         self.check_image(&current_img);
     }
 
+    /// Compares a generated text artifact against a committed golden file.
+    ///
+    /// The text-mode counterpart of [`Self::check_image`], sharing its `PARLEY_TEST=accept` loop,
+    /// its error accumulation, and the panic-on-`Drop` behavior. `relative_path` is resolved under
+    /// `snapshots/` (and `current/` on mismatch), so it may name a subdirectory:
+    /// `"traversal/reference__bundled__simple.md"`.
+    ///
+    /// Unlike images, there is no tolerance: text goldens compare byte-exactly. That is why
+    /// generated tables must not contain floats — an `f32` advance would flap across platforms.
+    pub(crate) fn check_text_snapshot(&mut self, relative_path: &str, contents: &str) {
+        let snapshot_path = snapshot_dir().join(relative_path);
+        let comparison_path = current_imgs_dir().join(relative_path);
+
+        #[track_caller]
+        fn save_text(path: &Path, contents: &str) {
+            if let Some(parent) = path.parent() {
+                std::fs::create_dir_all(parent).unwrap();
+            }
+            std::fs::write(path, contents).unwrap();
+        }
+
+        let result = match std::fs::read_to_string(&snapshot_path) {
+            Err(_) => Err(format!("Cannot find snapshot {}", snapshot_path.display())),
+            Ok(expected) if expected == contents => Ok(()),
+            Ok(expected) => Err(diff_summary(&expected, contents)),
+        };
+
+        if let Err(e) = result {
+            if is_accept_mode() {
+                save_text(&snapshot_path, contents);
+            } else {
+                save_text(&comparison_path, contents);
+                self.errors.push((comparison_path, e));
+            }
+        } else if is_generate_all_mode() {
+            save_text(&comparison_path, contents);
+        }
+    }
+
     pub(crate) fn check_image(&mut self, img: &Pixmap) {
         let test_case_name = std::mem::take(&mut self.next_test_case_name);
         let image_name = self.image_name(&test_case_name);
@@ -392,6 +431,48 @@ impl TestEnv {
     }
 }
 
+/// Renders the first difference between two text artifacts, with context.
+///
+/// Hand-rolled rather than pulling in a diff crate: a golden table can be hundreds of lines, and
+/// dumping both copies into a panic message is unreadable. Only the first divergence is shown —
+/// once a generated table drifts, the first row that moved is the one worth looking at, and
+/// `current/` holds the full text for a real diff.
+fn diff_summary(expected: &str, actual: &str) -> String {
+    use std::fmt::Write;
+
+    const CONTEXT: usize = 3;
+
+    let expected_lines: Vec<&str> = expected.lines().collect();
+    let actual_lines: Vec<&str> = actual.lines().collect();
+
+    let first_diff = expected_lines
+        .iter()
+        .zip(&actual_lines)
+        .position(|(e, a)| e != a)
+        .unwrap_or_else(|| expected_lines.len().min(actual_lines.len()));
+
+    let start = first_diff.saturating_sub(CONTEXT);
+    let mut msg = format!(
+        "Snapshot differs (expected {} lines, got {}); first difference at line {}:\n",
+        expected_lines.len(),
+        actual_lines.len(),
+        first_diff + 1,
+    );
+    for (label, lines) in [("expected", &expected_lines), ("actual", &actual_lines)] {
+        writeln!(&mut msg, "--- {label}").unwrap();
+        for (i, line) in lines
+            .iter()
+            .enumerate()
+            .take(first_diff + CONTEXT + 1)
+            .skip(start)
+        {
+            let marker = if i == first_diff { ">" } else { " " };
+            writeln!(&mut msg, "{marker} {:>4} | {line}", i + 1).unwrap();
+        }
+    }
+    msg
+}
+
 impl Drop for TestEnv {
     // Dropping of TestEnv cause panic (if there is not already one)
     // We do not panic immediately when error is detected because we want to
@@ -404,7 +485,7 @@ impl Drop for TestEnv {
             for (path, msg) in &self.errors {
                 write!(
                     &mut panic_msg,
-                    "{}\nImage written into: {}\n",
+                    "{}\nWritten into: {}\n",
                     msg,
                     path.display()
                 )
