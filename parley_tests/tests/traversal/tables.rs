@@ -125,7 +125,7 @@ fn traversal_press_counts() {
                 continue; // Uninteresting: both models agree.
             }
             contested += 1;
-            let traj = Trajectory::measure(&mut t, e.text, *&op);
+            let traj = Trajectory::measure(&mut t, e.text, op);
             if traj.presses == cps {
                 matches_cps += 1;
             } else if traj.presses == egc {
@@ -145,6 +145,154 @@ fn traversal_press_counts() {
     }
 
     env.check_text_snapshot("traversal/press_counts.md", &out);
+}
+
+/// parley's backspace against every reference rule, on every corpus entry.
+///
+/// **The artifact the PR #693 discussion needs.** Each rule is executed rather than quoted, so
+/// "what would Android do here" is measured. `authorities_agree` is the payoff: it separates rows
+/// where the references genuinely conflict *with each other* — a legitimate design dispute, where
+/// parley picking a side is a choice — from rows where they agree and **parley alone differs**,
+/// which is simply a bug.
+#[test]
+fn traversal_backspace_vs_authorities() {
+    use super::rules::Rule;
+
+    let mut env = TestEnv::new(test_name!(), None);
+    let mut t = TraversalEnv::new(TIER);
+
+    let mut out = String::new();
+    header(
+        &mut out,
+        "Backspace: parley against every reference rule",
+        "traversal_backspace_vs_authorities",
+    );
+    writeln!(
+        &mut out,
+        "Presses to erase each entry with backspace. Every column is executed, not quoted. The \
+         reference rules are **clean-room reimplementations from documented behaviour** — parley \
+         is Apache-2.0 OR MIT and the sources they describe are Apache-2.0 only, so their code \
+         cannot be copied here. They are good enough for whole-sequence-versus-one-codepoint, and \
+         no more: see `rules.rs` for what is approximate."
+    )
+    .unwrap();
+    writeln!(&mut out).unwrap();
+    writeln!(
+        &mut out,
+        "- `egc` — UAX #29 extended grapheme clusters. `CodeMirror` 6 is exactly this.\n\
+         - `aosp` — Android, as ported by xi-editor and xilem #303.\n\
+         - `blink` — Chrome. AOSP's rule with `Extended_Pictographic` instead of `Emoji`.\n\
+         - `pango` — GTK. Script-dependent.\n\
+         - `qt` — Qt's `QTextCursor` (QtGui), which backs `QTextEdit`, `QPlainTextEdit` and QML `TextEdit`. NOT `QLineEdit`, a separate implementation that was not examined.\n\
+         - `agree` — whether all five references give the same answer.\n\
+         - `verdict` — how parley relates to them."
+    )
+    .unwrap();
+    writeln!(&mut out).unwrap();
+    writeln!(
+        &mut out,
+        "⚠ **`crlf` appears as a conflict only because of an unverified approximation.** Qt \
+         documents no CRLF case — its rule is emoji-or-one-codepoint and nothing else — so the `qt` \
+         column splits the pair while the other four do not. Whether real Qt behaves that way was \
+         not confirmed; a `QTextDocument` normalises newlines, so the case may never arise there. \
+         Do not read that row as evidence about Qt."
+    )
+    .unwrap();
+    writeln!(&mut out).unwrap();
+    writeln!(
+        &mut out,
+        "| id | parley | egc | aosp | blink | pango | qt | agree | verdict |"
+    )
+    .unwrap();
+    writeln!(&mut out, "|---|---|---|---|---|---|---|---|---|").unwrap();
+
+    let mut agreed_and_parley_differs = Vec::new();
+    let mut references_conflict = Vec::new();
+
+    for e in CORPUS {
+        if e.text.is_empty() {
+            continue;
+        }
+        let parley = Trajectory::measure(&mut t, e.text, Op::Backdelete).presses;
+        let refs: Vec<usize> = Rule::ALL.iter().map(|r| r.presses(e.text)).collect();
+        let agree = refs.iter().all(|r| *r == refs[0]);
+
+        let verdict = if agree {
+            if parley == refs[0] {
+                "match"
+            } else {
+                agreed_and_parley_differs.push(e.id);
+                "**parley alone differs**"
+            }
+        } else {
+            references_conflict.push(e.id);
+            let matching: Vec<&str> = Rule::ALL
+                .iter()
+                .zip(&refs)
+                .filter(|(_, r)| **r == parley)
+                .map(|(rule, _)| rule.slug())
+                .collect();
+            if matching.is_empty() {
+                "**matches none**"
+            } else {
+                "sides with some"
+            }
+        };
+
+        write!(&mut out, "| {} | {} |", e.id, parley).unwrap();
+        for r in &refs {
+            write!(&mut out, " {r} |").unwrap();
+        }
+        writeln!(
+            &mut out,
+            " {} | {} |",
+            if agree { "yes" } else { "**no**" },
+            verdict
+        )
+        .unwrap();
+    }
+
+    writeln!(&mut out).unwrap();
+    writeln!(&mut out, "## Summary").unwrap();
+    writeln!(&mut out).unwrap();
+    writeln!(
+        &mut out,
+        "**References agree and parley differs — {} entr{}**{}",
+        agreed_and_parley_differs.len(),
+        if agreed_and_parley_differs.len() == 1 {
+            "y"
+        } else {
+            "ies"
+        },
+        if agreed_and_parley_differs.is_empty() {
+            String::from(
+                ". There is no input on which every reference implementation agrees and parley \
+                 does something else.",
+            )
+        } else {
+            format!(
+                ": {}. These are not a matter of opinion — every reference agrees and parley does \
+                 something else.",
+                agreed_and_parley_differs.join(", ")
+            )
+        }
+    )
+    .unwrap();
+    writeln!(&mut out).unwrap();
+    writeln!(
+        &mut out,
+        "**References conflict with each other — {} entries**{} On these, parley is picking a side \
+         in a genuine disagreement rather than being wrong.",
+        references_conflict.len(),
+        if references_conflict.is_empty() {
+            String::from(".")
+        } else {
+            format!(": {}.", references_conflict.join(", "))
+        }
+    )
+    .unwrap();
+
+    env.check_text_snapshot("traversal/backspace_vs_authorities.md", &out);
 }
 
 /// What backspace and forward delete actually remove, press by press.

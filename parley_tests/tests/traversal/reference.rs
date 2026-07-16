@@ -106,10 +106,10 @@ mod tests {
         assert_eq!(egc_count(""), 0);
     }
 
-    /// Pins the ICU version's answer for the two GB9c scripts that differ.
+    /// Pins the ICU version's answer for the two `GB9c` scripts that differ.
     ///
-    /// Devanagari is one of the six scripts GB9c covers; Kannada is not. If a future ICU bump
-    /// extends GB9c, this test fails and tells us the reference moved — which matters, because the
+    /// Devanagari is one of the six scripts `GB9c` covers; Kannada is not. If a future ICU bump
+    /// extends `GB9c`, this test fails and tells us the reference moved — which matters, because the
     /// harness reports parley's divergence *from* this.
     #[test]
     fn traversal_reference_gb9c_covers_devanagari_not_kannada() {

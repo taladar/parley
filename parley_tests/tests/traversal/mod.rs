@@ -27,6 +27,8 @@
 //! - [`probe`] — establishes what the rest of the harness may assume, notably whether cluster
 //!   text ranges are font-invariant.
 //! - [`reference`] — the independent ICU oracle.
+//! - [`rules`] — clean-room reimplementations of other implementations' backspace rules, so
+//!   "what would Android do" is a measurement rather than a quote.
 //! - [`tables`] — the generated behavior tables. Every cell is emitted by running code.
 //! - [`findings`] — automated detectors over the measurements; their output is a golden, so a
 //!   known defect is a visible row and a new one turns CI red.
@@ -41,4 +43,5 @@ mod measure;
 mod ops;
 mod probe;
 mod reference;
+mod rules;
 mod tables;
