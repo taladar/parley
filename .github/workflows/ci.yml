@@ -246,6 +246,13 @@ jobs:
       - name: cargo nextest
         run: cargo nextest run --workspace --locked --all-features --no-fail-fast
 
+      # `--all-features` turns on `parley/complex-scripts`, so the above only ever exercises ICU's
+      # dictionary word and line breaking. The default-feature path — what a plain
+      # `cargo test -p parley_tests` gets, and what a consumer who does not opt in ships — was
+      # never tested. It measurably differs for Thai and Myanmar word motion.
+      - name: cargo nextest (default features)
+        run: cargo nextest run -p parley_tests --locked --no-fail-fast
+
       - name: cargo test --doc
         run: cargo test --doc --workspace --locked --all-features --no-fail-fast
 

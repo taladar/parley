@@ -15,6 +15,10 @@ name = "tests"
 path = "tests/mod.rs"
 
 [features]
+# Enables ICU dictionary-based word and line breaking for Thai/CJK/Khmer/Lao/Myanmar.
+# CI runs `--all-features`, so the ON setting is what upstream tests; the OFF setting is what a
+# plain `cargo test -p parley_tests` gets, and was never covered before this.
+complex-scripts = ["parley/complex-scripts"]
 system = ["parley/system"]
 
 [dependencies]

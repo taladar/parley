@@ -16,77 +16,84 @@ Presses to erase each entry with backspace. Every column is executed, not quoted
 
 ⚠ **`crlf` appears as a conflict only because of an unverified approximation.** Qt documents no CRLF case — its rule is emoji-or-one-codepoint and nothing else — so the `qt` column splits the pair while the other four do not. Whether real Qt behaves that way was not confirmed; a `QTextDocument` normalises newlines, so the case may never arise there. Do not read that row as evidence about Qt.
 
-| id | parley | egc | aosp | blink | pango | qt | agree | verdict |
-|---|---|---|---|---|---|---|---|---|
-| ascii_ab | 2 | 2 | 2 | 2 | 2 | 2 | yes | match |
-| ascii_a | 1 | 1 | 1 | 1 | 1 | 1 | yes | match |
-| latin_e_combining_acute | 2 | 1 | 2 | 2 | 1 | 2 | **no** | sides with some |
-| latin_e_acute_precomposed | 1 | 1 | 1 | 1 | 1 | 1 | yes | match |
-| latin_e_two_combining | 3 | 1 | 3 | 3 | 1 | 3 | **no** | sides with some |
-| combining_acute_alone | 1 | 1 | 1 | 1 | 1 | 1 | yes | match |
-| crlf | 4 | 3 | 3 | 3 | 3 | 4 | **no** | sides with some |
-| lf | 3 | 3 | 3 | 3 | 3 | 3 | yes | match |
-| cr | 3 | 3 | 3 | 3 | 3 | 3 | yes | match |
-| line_separator | 3 | 3 | 3 | 3 | 3 | 3 | yes | match |
-| paragraph_separator | 3 | 3 | 3 | 3 | 3 | 3 | yes | match |
-| next_line_nel | 3 | 3 | 3 | 3 | 3 | 3 | yes | match |
-| vertical_tab | 3 | 3 | 3 | 3 | 3 | 3 | yes | match |
-| form_feed | 3 | 3 | 3 | 3 | 3 | 3 | yes | match |
-| emoji_party_popper | 1 | 1 | 1 | 1 | 1 | 1 | yes | match |
-| emoji_cowboy | 1 | 1 | 1 | 1 | 1 | 1 | yes | match |
-| emoji_check_mark | 1 | 1 | 1 | 1 | 1 | 1 | yes | match |
-| emoji_victory_hand_vs16 | 2 | 1 | 1 | 1 | 1 | 1 | yes | **parley alone differs** |
-| emoji_heart_vs16 | 2 | 1 | 1 | 1 | 1 | 1 | yes | **parley alone differs** |
-| emoji_heart_vs15 | 2 | 1 | 1 | 1 | 1 | 1 | yes | **parley alone differs** |
-| emoji_heart_bare | 1 | 1 | 1 | 1 | 1 | 1 | yes | match |
-| emoji_zwj_family | 7 | 1 | 1 | 1 | 1 | 1 | yes | **parley alone differs** |
-| emoji_ri_flag_jp | 2 | 1 | 1 | 1 | 1 | 1 | yes | **parley alone differs** |
-| emoji_ri_odd_run | 3 | 2 | 2 | 2 | 2 | 2 | yes | **parley alone differs** |
-| emoji_ri_at_text_start | 3 | 2 | 2 | 2 | 2 | 2 | yes | **parley alone differs** |
-| emoji_skin_tone | 2 | 1 | 1 | 1 | 1 | 1 | yes | **parley alone differs** |
-| emoji_keycap_1 | 3 | 1 | 1 | 1 | 1 | 1 | yes | **parley alone differs** |
-| emoji_tag_flag_scotland | 7 | 1 | 1 | 1 | 1 | 1 | yes | **parley alone differs** |
-| hangul_jamo_gak | 3 | 1 | 3 | 3 | 3 | 3 | **no** | sides with some |
-| hangul_precomposed_gak | 1 | 1 | 1 | 1 | 1 | 1 | yes | match |
-| hangul_lv_no_trailing | 2 | 1 | 2 | 2 | 2 | 2 | **no** | sides with some |
-| devanagari_ka_i_matra | 2 | 1 | 2 | 2 | 2 | 2 | **no** | sides with some |
-| devanagari_conjunct_ksha | 3 | 1 | 3 | 3 | 3 | 3 | **no** | sides with some |
-| devanagari_ka_virama | 2 | 1 | 2 | 2 | 2 | 2 | **no** | sides with some |
-| tamil_ko_split_vowel | 2 | 1 | 2 | 2 | 2 | 2 | **no** | sides with some |
-| bengali_conjunct | 3 | 1 | 3 | 3 | 3 | 3 | **no** | sides with some |
-| kannada_conjunct | 3 | 2 | 3 | 3 | 3 | 3 | **no** | sides with some |
-| thai_mai_leading_vowel | 3 | 2 | 3 | 3 | 3 | 3 | **no** | sides with some |
-| thai_sara_am | 2 | 1 | 2 | 2 | 2 | 2 | **no** | sides with some |
-| thai_tone_above | 3 | 1 | 3 | 3 | 3 | 3 | **no** | sides with some |
-| thai_word_sequence | 9 | 6 | 9 | 9 | 9 | 9 | **no** | sides with some |
-| khmer_coeng_stack | 3 | 1 | 3 | 3 | 3 | 3 | **no** | sides with some |
-| myanmar_stack | 3 | 1 | 3 | 3 | 3 | 3 | **no** | sides with some |
-| arabic_lam_alef | 2 | 2 | 2 | 2 | 2 | 2 | yes | match |
-| arabic_base_harakat | 2 | 1 | 2 | 2 | 2 | 2 | **no** | sides with some |
-| arabic_shadda_fatha | 3 | 1 | 3 | 3 | 3 | 3 | **no** | sides with some |
-| arabic_tatweel | 3 | 3 | 3 | 3 | 3 | 3 | yes | match |
-| hebrew_base_niqqud | 2 | 1 | 2 | 2 | 2 | 2 | **no** | sides with some |
-| hebrew_cantillation | 3 | 1 | 3 | 3 | 3 | 3 | **no** | sides with some |
-| japanese_ka_dakuten | 2 | 1 | 2 | 2 | 1 | 2 | **no** | sides with some |
-| japanese_ga_precomposed | 1 | 1 | 1 | 1 | 1 | 1 | yes | match |
-| japanese_ivs | 2 | 1 | 1 | 1 | 2 | 2 | **no** | sides with some |
-| ligature_fi | 2 | 2 | 2 | 2 | 2 | 2 | yes | match |
-| ligature_ffi | 3 | 3 | 3 | 3 | 3 | 3 | yes | match |
-| ligature_fi_space | 5 | 5 | 5 | 5 | 5 | 5 | yes | match |
-| zwj_alone | 3 | 2 | 3 | 3 | 2 | 3 | **no** | sides with some |
-| zwnj | 3 | 2 | 3 | 3 | 2 | 3 | **no** | sides with some |
-| zwsp | 3 | 3 | 3 | 3 | 3 | 3 | yes | match |
-| arabic_number_sign_prepend | 2 | 1 | 2 | 2 | 2 | 2 | **no** | sides with some |
-| control_null | 3 | 3 | 3 | 3 | 3 | 3 | yes | match |
-| words_spaces | 5 | 5 | 5 | 5 | 5 | 5 | yes | match |
-| tab | 3 | 3 | 3 | 3 | 3 | 3 | yes | match |
-| nbsp | 3 | 3 | 3 | 3 | 3 | 3 | yes | match |
-| bidi_ltr_rtl_ltr | 6 | 6 | 6 | 6 | 6 | 6 | yes | match |
-| bidi_rtl_only | 3 | 3 | 3 | 3 | 3 | 3 | yes | match |
-| bidi_rtl_with_combining | 4 | 3 | 4 | 4 | 4 | 4 | **no** | sides with some |
+| id | parley | egc | aosp | blink | pango | qt | agree | parley sides with | verdict |
+|---|---|---|---|---|---|---|---|---|---|
+| ascii_ab | 2 | 2 | 2 | 2 | 2 | 2 | yes | egc,aosp,blink,pango,qt | match |
+| ascii_a | 1 | 1 | 1 | 1 | 1 | 1 | yes | egc,aosp,blink,pango,qt | match |
+| latin_e_combining_acute | 2 | 1 | 2 | 2 | 1 | 2 | **no** | aosp,blink,qt | sides with majority |
+| latin_e_acute_precomposed | 1 | 1 | 1 | 1 | 1 | 1 | yes | egc,aosp,blink,pango,qt | match |
+| latin_e_two_combining | 3 | 1 | 3 | 3 | 1 | 3 | **no** | aosp,blink,qt | sides with majority |
+| combining_acute_alone | 1 | 1 | 1 | 1 | 1 | 1 | yes | egc,aosp,blink,pango,qt | match |
+| crlf | 4 | 3 | 3 | 3 | 3 | 4 | **no** | qt | **minority** |
+| lf | 3 | 3 | 3 | 3 | 3 | 3 | yes | egc,aosp,blink,pango,qt | match |
+| cr | 3 | 3 | 3 | 3 | 3 | 3 | yes | egc,aosp,blink,pango,qt | match |
+| line_separator | 3 | 3 | 3 | 3 | 3 | 3 | yes | egc,aosp,blink,pango,qt | match |
+| paragraph_separator | 3 | 3 | 3 | 3 | 3 | 3 | yes | egc,aosp,blink,pango,qt | match |
+| next_line_nel | 3 | 3 | 3 | 3 | 3 | 3 | yes | egc,aosp,blink,pango,qt | match |
+| vertical_tab | 3 | 3 | 3 | 3 | 3 | 3 | yes | egc,aosp,blink,pango,qt | match |
+| form_feed | 3 | 3 | 3 | 3 | 3 | 3 | yes | egc,aosp,blink,pango,qt | match |
+| emoji_party_popper | 1 | 1 | 1 | 1 | 1 | 1 | yes | egc,aosp,blink,pango,qt | match |
+| emoji_cowboy | 1 | 1 | 1 | 1 | 1 | 1 | yes | egc,aosp,blink,pango,qt | match |
+| emoji_check_mark | 1 | 1 | 1 | 1 | 1 | 1 | yes | egc,aosp,blink,pango,qt | match |
+| emoji_victory_hand_vs16 | 2 | 1 | 1 | 1 | 1 | 1 | yes | none | **parley alone differs** |
+| emoji_heart_vs16 | 2 | 1 | 1 | 1 | 1 | 1 | yes | none | **parley alone differs** |
+| emoji_heart_vs15 | 2 | 1 | 1 | 1 | 1 | 1 | yes | none | **parley alone differs** |
+| emoji_heart_bare | 1 | 1 | 1 | 1 | 1 | 1 | yes | egc,aosp,blink,pango,qt | match |
+| emoji_zwj_family | 7 | 1 | 1 | 1 | 1 | 1 | yes | none | **parley alone differs** |
+| emoji_ri_flag_jp | 2 | 1 | 1 | 1 | 1 | 1 | yes | none | **parley alone differs** |
+| emoji_ri_odd_run | 3 | 2 | 2 | 2 | 2 | 2 | yes | none | **parley alone differs** |
+| emoji_ri_at_text_start | 3 | 2 | 2 | 2 | 2 | 2 | yes | none | **parley alone differs** |
+| emoji_skin_tone | 2 | 1 | 1 | 1 | 1 | 1 | yes | none | **parley alone differs** |
+| emoji_keycap_1 | 3 | 1 | 1 | 1 | 1 | 1 | yes | none | **parley alone differs** |
+| emoji_tag_flag_scotland | 7 | 1 | 1 | 1 | 1 | 1 | yes | none | **parley alone differs** |
+| hangul_jamo_gak | 3 | 1 | 3 | 3 | 3 | 3 | **no** | aosp,blink,pango,qt | sides with majority |
+| hangul_precomposed_gak | 1 | 1 | 1 | 1 | 1 | 1 | yes | egc,aosp,blink,pango,qt | match |
+| hangul_lv_no_trailing | 2 | 1 | 2 | 2 | 2 | 2 | **no** | aosp,blink,pango,qt | sides with majority |
+| devanagari_ka_i_matra | 2 | 1 | 2 | 2 | 2 | 2 | **no** | aosp,blink,pango,qt | sides with majority |
+| devanagari_conjunct_ksha | 3 | 1 | 3 | 3 | 3 | 3 | **no** | aosp,blink,pango,qt | sides with majority |
+| devanagari_ka_virama | 2 | 1 | 2 | 2 | 2 | 2 | **no** | aosp,blink,pango,qt | sides with majority |
+| tamil_ko_split_vowel | 2 | 1 | 2 | 2 | 2 | 2 | **no** | aosp,blink,pango,qt | sides with majority |
+| bengali_conjunct | 3 | 1 | 3 | 3 | 3 | 3 | **no** | aosp,blink,pango,qt | sides with majority |
+| kannada_conjunct | 3 | 2 | 3 | 3 | 3 | 3 | **no** | aosp,blink,pango,qt | sides with majority |
+| thai_mai_leading_vowel | 3 | 2 | 3 | 3 | 3 | 3 | **no** | aosp,blink,pango,qt | sides with majority |
+| thai_sara_am | 2 | 1 | 2 | 2 | 2 | 2 | **no** | aosp,blink,pango,qt | sides with majority |
+| thai_tone_above | 3 | 1 | 3 | 3 | 3 | 3 | **no** | aosp,blink,pango,qt | sides with majority |
+| thai_word_sequence | 9 | 6 | 9 | 9 | 9 | 9 | **no** | aosp,blink,pango,qt | sides with majority |
+| khmer_coeng_stack | 3 | 1 | 3 | 3 | 3 | 3 | **no** | aosp,blink,pango,qt | sides with majority |
+| myanmar_stack | 3 | 1 | 3 | 3 | 3 | 3 | **no** | aosp,blink,pango,qt | sides with majority |
+| arabic_lam_alef | 2 | 2 | 2 | 2 | 2 | 2 | yes | egc,aosp,blink,pango,qt | match |
+| arabic_base_harakat | 2 | 1 | 2 | 2 | 2 | 2 | **no** | aosp,blink,pango,qt | sides with majority |
+| arabic_shadda_fatha | 3 | 1 | 3 | 3 | 3 | 3 | **no** | aosp,blink,pango,qt | sides with majority |
+| arabic_tatweel | 3 | 3 | 3 | 3 | 3 | 3 | yes | egc,aosp,blink,pango,qt | match |
+| hebrew_base_niqqud | 2 | 1 | 2 | 2 | 2 | 2 | **no** | aosp,blink,pango,qt | sides with majority |
+| hebrew_cantillation | 3 | 1 | 3 | 3 | 3 | 3 | **no** | aosp,blink,pango,qt | sides with majority |
+| japanese_ka_dakuten | 2 | 1 | 2 | 2 | 1 | 2 | **no** | aosp,blink,qt | sides with majority |
+| japanese_ga_precomposed | 1 | 1 | 1 | 1 | 1 | 1 | yes | egc,aosp,blink,pango,qt | match |
+| japanese_ivs | 2 | 1 | 1 | 1 | 2 | 2 | **no** | pango,qt | **minority** |
+| ligature_fi | 2 | 2 | 2 | 2 | 2 | 2 | yes | egc,aosp,blink,pango,qt | match |
+| ligature_ffi | 3 | 3 | 3 | 3 | 3 | 3 | yes | egc,aosp,blink,pango,qt | match |
+| ligature_fi_space | 5 | 5 | 5 | 5 | 5 | 5 | yes | egc,aosp,blink,pango,qt | match |
+| zwj_alone | 3 | 2 | 3 | 3 | 2 | 3 | **no** | aosp,blink,qt | sides with majority |
+| zwnj | 3 | 2 | 3 | 3 | 2 | 3 | **no** | aosp,blink,qt | sides with majority |
+| zwsp | 3 | 3 | 3 | 3 | 3 | 3 | yes | egc,aosp,blink,pango,qt | match |
+| arabic_number_sign_prepend | 2 | 1 | 2 | 2 | 2 | 2 | **no** | aosp,blink,pango,qt | sides with majority |
+| control_null | 3 | 3 | 3 | 3 | 3 | 3 | yes | egc,aosp,blink,pango,qt | match |
+| words_spaces | 5 | 5 | 5 | 5 | 5 | 5 | yes | egc,aosp,blink,pango,qt | match |
+| tab | 3 | 3 | 3 | 3 | 3 | 3 | yes | egc,aosp,blink,pango,qt | match |
+| nbsp | 3 | 3 | 3 | 3 | 3 | 3 | yes | egc,aosp,blink,pango,qt | match |
+| bidi_ltr_rtl_ltr | 6 | 6 | 6 | 6 | 6 | 6 | yes | egc,aosp,blink,pango,qt | match |
+| bidi_rtl_only | 3 | 3 | 3 | 3 | 3 | 3 | yes | egc,aosp,blink,pango,qt | match |
+| bidi_rtl_with_combining | 4 | 3 | 4 | 4 | 4 | 4 | **no** | aosp,blink,pango,qt | sides with majority |
 
 ## Summary
 
 **References agree and parley differs — 10 entries**: emoji_victory_hand_vs16, emoji_heart_vs16, emoji_heart_vs15, emoji_zwj_family, emoji_ri_flag_jp, emoji_ri_odd_run, emoji_ri_at_text_start, emoji_skin_tone, emoji_keycap_1, emoji_tag_flag_scotland. These are not a matter of opinion — every reference agrees and parley does something else.
 
-**References conflict with each other — 27 entries**: latin_e_combining_acute, latin_e_two_combining, crlf, hangul_jamo_gak, hangul_lv_no_trailing, devanagari_ka_i_matra, devanagari_conjunct_ksha, devanagari_ka_virama, tamil_ko_split_vowel, bengali_conjunct, kannada_conjunct, thai_mai_leading_vowel, thai_sara_am, thai_tone_above, thai_word_sequence, khmer_coeng_stack, myanmar_stack, arabic_base_harakat, arabic_shadda_fatha, hebrew_base_niqqud, hebrew_cantillation, japanese_ka_dakuten, japanese_ivs, zwj_alone, zwnj, arabic_number_sign_prepend, bidi_rtl_with_combining. On these, parley is picking a side in a genuine disagreement rather than being wrong.
+**References conflict with each other — 27 entries.** On most of these parley sides with the majority, so it is picking a side in a genuine disagreement rather than being wrong.
+
+**Of those, parley is in the minority on 2 — the rows worth a second look**, because "the references disagree" is a much weaker defence when most of them agree with each other and not with parley:
+
+| id | parley | majority | majority size |
+|---|---|---|---|
+| crlf | 4 | 3 | 4 of 5 |
+| japanese_ivs | 2 | 1 | 3 of 5 |

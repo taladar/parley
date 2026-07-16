@@ -19,6 +19,7 @@ use super::corpus::CORPUS;
 use super::env::{FontTier, TraversalEnv};
 use super::measure::{CursorDelta, Outcome, StepTable, Termination, Trajectory, render_codepoints};
 use super::ops::Op;
+use super::probe::measured_axis;
 use super::reference::egc_count;
 
 /// The tier every behavior table is measured at.
@@ -144,7 +145,8 @@ fn traversal_press_counts() {
         .unwrap();
     }
 
-    env.check_text_snapshot("traversal/press_counts.md", &out);
+    let axis = measured_axis(&mut t);
+    env.check_text_snapshot(&format!("traversal/press_counts__{axis}.md"), &out);
 }
 
 /// parley's backspace against every reference rule, on every corpus entry.
@@ -201,13 +203,14 @@ fn traversal_backspace_vs_authorities() {
     writeln!(&mut out).unwrap();
     writeln!(
         &mut out,
-        "| id | parley | egc | aosp | blink | pango | qt | agree | verdict |"
+        "| id | parley | egc | aosp | blink | pango | qt | agree | parley sides with | verdict |"
     )
     .unwrap();
-    writeln!(&mut out, "|---|---|---|---|---|---|---|---|---|").unwrap();
+    writeln!(&mut out, "|---|---|---|---|---|---|---|---|---|---|").unwrap();
 
     let mut agreed_and_parley_differs = Vec::new();
     let mut references_conflict = Vec::new();
+    let mut parley_in_minority = Vec::new();
 
     for e in CORPUS {
         if e.text.is_empty() {
@@ -216,6 +219,27 @@ fn traversal_backspace_vs_authorities() {
         let parley = Trajectory::measure(&mut t, e.text, Op::Backdelete).presses;
         let refs: Vec<usize> = Rule::ALL.iter().map(|r| r.presses(e.text)).collect();
         let agree = refs.iter().all(|r| *r == refs[0]);
+
+        let siding: Vec<&str> = Rule::ALL
+            .iter()
+            .zip(&refs)
+            .filter(|(_, r)| **r == parley)
+            .map(|(rule, _)| rule.slug())
+            .collect();
+
+        // The most popular answer among the references, and how many gave it. "The references
+        // conflict" is too coarse on its own: a 4-1 split with parley on the 1 is a very different
+        // claim from parley siding with a majority.
+        let mut best_val = refs[0];
+        let mut best_n = 0;
+        for candidate in &refs {
+            let n = refs.iter().filter(|r| *r == candidate).count();
+            if n > best_n {
+                best_n = n;
+                best_val = *candidate;
+            }
+        }
+        let is_minority = !agree && parley != best_val && best_n * 2 > refs.len();
 
         let verdict = if agree {
             if parley == refs[0] {
@@ -226,16 +250,13 @@ fn traversal_backspace_vs_authorities() {
             }
         } else {
             references_conflict.push(e.id);
-            let matching: Vec<&str> = Rule::ALL
-                .iter()
-                .zip(&refs)
-                .filter(|(_, r)| **r == parley)
-                .map(|(rule, _)| rule.slug())
-                .collect();
-            if matching.is_empty() {
+            if is_minority {
+                parley_in_minority.push((e.id, parley, best_val, best_n));
+                "**minority**"
+            } else if siding.is_empty() {
                 "**matches none**"
             } else {
-                "sides with some"
+                "sides with majority"
             }
         };
 
@@ -245,8 +266,13 @@ fn traversal_backspace_vs_authorities() {
         }
         writeln!(
             &mut out,
-            " {} | {} |",
+            " {} | {} | {} |",
             if agree { "yes" } else { "**no**" },
+            if siding.is_empty() {
+                String::from("none")
+            } else {
+                siding.join(",")
+            },
             verdict
         )
         .unwrap();
@@ -281,16 +307,30 @@ fn traversal_backspace_vs_authorities() {
     writeln!(&mut out).unwrap();
     writeln!(
         &mut out,
-        "**References conflict with each other — {} entries**{} On these, parley is picking a side \
-         in a genuine disagreement rather than being wrong.",
+        "**References conflict with each other — {} entries.** On most of these parley sides with \
+         the majority, so it is picking a side in a genuine disagreement rather than being wrong.",
         references_conflict.len(),
-        if references_conflict.is_empty() {
-            String::from(".")
-        } else {
-            format!(": {}.", references_conflict.join(", "))
-        }
     )
     .unwrap();
+    writeln!(&mut out).unwrap();
+    writeln!(
+        &mut out,
+        "**Of those, parley is in the minority on {} — the rows worth a second look**, because \
+         \"the references disagree\" is a much weaker defence when most of them agree with each \
+         other and not with parley:",
+        parley_in_minority.len()
+    )
+    .unwrap();
+    writeln!(&mut out).unwrap();
+    if parley_in_minority.is_empty() {
+        writeln!(&mut out, "(none)").unwrap();
+    } else {
+        writeln!(&mut out, "| id | parley | majority | majority size |").unwrap();
+        writeln!(&mut out, "|---|---|---|---|").unwrap();
+        for (id, parley, val, n) in &parley_in_minority {
+            writeln!(&mut out, "| {id} | {parley} | {val} | {n} of 5 |").unwrap();
+        }
+    }
 
     env.check_text_snapshot("traversal/backspace_vs_authorities.md", &out);
 }
@@ -419,5 +459,6 @@ fn traversal_motion_steps() {
         writeln!(&mut out).unwrap();
     }
 
-    env.check_text_snapshot("traversal/motion_steps.md", &out);
+    let axis = measured_axis(&mut t);
+    env.check_text_snapshot(&format!("traversal/motion_steps__{axis}.md"), &out);
 }
