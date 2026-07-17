@@ -33,8 +33,8 @@
 
 #![allow(dead_code, reason = "consumed as the harness lands, step by step")]
 
-use icu_properties::CodePointSetData;
-use icu_properties::props::Emoji;
+use icu_properties::props::{DefaultIgnorableCodePoint, Emoji, GeneralCategory, WhiteSpace};
+use icu_properties::{CodePointMapData, CodePointSetData};
 use icu_segmenter::GraphemeClusterSegmenter;
 
 use super::corpus::CORPUS;
@@ -61,6 +61,126 @@ pub(crate) fn egc_count(text: &str) -> usize {
 /// `// TODO: Defer to ICU4X properties`.
 pub(crate) fn is_uts51_emoji(c: char) -> bool {
     CodePointSetData::new::<Emoji>().contains(c)
+}
+
+/// Whether a codepoint has a visual form **of its own**, and if not, why not.
+///
+/// The distinction this draws is "would a user see anything if this codepoint were alone in a
+/// grapheme". It is what separates a caret position or a leftover fragment that a user can perceive
+/// from one that is invisible to them. A boundary beside a [`Ink::Zwj`] has no visual referent at
+/// all, and a buffer that is *only* a ZWJ renders as nothing while still being non-empty.
+///
+/// # Not the same question as "zero advance"
+///
+/// Whether parley gives a codepoint a zero advance is a **measurement** of parley and lives in the
+/// hit-test tables. This is the **oracle**: what Unicode says the codepoint is. The two disagreeing
+/// is a finding, not a bug in either — see `hit.rs`, where a no-ink codepoint measurably receives a
+/// non-zero, clickable slice.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) enum Ink {
+    /// Has a visual form of its own.
+    Visible,
+    /// U+200D ZERO WIDTH JOINER.
+    Zwj,
+    /// U+200C ZERO WIDTH NON-JOINER.
+    Zwnj,
+    /// U+200B ZERO WIDTH SPACE.
+    Zwsp,
+    /// U+FE0E VARIATION SELECTOR-15, the text-presentation selector.
+    Vs15,
+    /// U+FE0F VARIATION SELECTOR-16, the emoji-presentation selector.
+    Vs16,
+    /// U+E0100..=U+E01EF, an ideographic variation selector.
+    Ivs,
+    /// U+E0020..=U+E007F, a tag character from an emoji tag sequence.
+    Tag,
+    /// A combining mark (`Mn`/`Me`): renders attached to a base, nothing on its own.
+    Mark,
+    /// Some other `Default_Ignorable_Code_Point`.
+    Ignorable,
+    /// A `Cc` control that is not whitespace.
+    Control,
+    /// Some other `Cf` format character.
+    Format,
+    /// `White_Space`: a space, a tab, or a line terminator.
+    ///
+    /// Deliberately its own class rather than a control or a separator, and deliberately **not**
+    /// undisplayable. A lone newline or tab is an utterly ordinary buffer — it occupies space, the
+    /// user put it there on purpose, and calling it "stranded" would bury the cases that matter
+    /// under every `lf` and `crlf` entry in the corpus.
+    Space,
+}
+
+impl Ink {
+    pub(crate) fn slug(self) -> &'static str {
+        match self {
+            Self::Visible => "ink",
+            Self::Zwj => "ZWJ",
+            Self::Zwnj => "ZWNJ",
+            Self::Zwsp => "ZWSP",
+            Self::Vs15 => "VS15",
+            Self::Vs16 => "VS16",
+            Self::Ivs => "IVS",
+            Self::Tag => "TAG",
+            Self::Mark => "MARK",
+            Self::Ignorable => "IGN",
+            Self::Control => "CTRL",
+            Self::Format => "FMT",
+            Self::Space => "SPACE",
+        }
+    }
+
+    /// Whether a codepoint of this class, alone in a grapheme, would show the user nothing.
+    ///
+    /// [`Self::Space`] is deliberately **not** included: a lone space is degenerate but it is
+    /// visible as a gap and is a perfectly ordinary thing to have in a buffer.
+    pub(crate) fn is_undisplayable_alone(self) -> bool {
+        !matches!(self, Self::Visible | Self::Space)
+    }
+}
+
+/// Classifies `c` by what it renders as on its own.
+///
+/// `White_Space` is checked before the general category so that a tab and a line feed — both `Cc` —
+/// land in [`Ink::Space`] rather than [`Ink::Control`]. U+200B ZERO WIDTH SPACE is *not*
+/// `White_Space` and stays undisplayable, which is the right answer: it is invisible in a way a
+/// tab is not.
+pub(crate) fn ink(c: char) -> Ink {
+    match c {
+        '\u{200D}' => return Ink::Zwj,
+        '\u{200C}' => return Ink::Zwnj,
+        '\u{200B}' => return Ink::Zwsp,
+        '\u{FE0E}' => return Ink::Vs15,
+        '\u{FE0F}' => return Ink::Vs16,
+        '\u{E0100}'..='\u{E01EF}' => return Ink::Ivs,
+        '\u{E0020}'..='\u{E007F}' => return Ink::Tag,
+        _ => {}
+    }
+    if CodePointSetData::new::<WhiteSpace>().contains(c) {
+        return Ink::Space;
+    }
+    match CodePointMapData::<GeneralCategory>::new().get(c) {
+        GeneralCategory::NonspacingMark | GeneralCategory::EnclosingMark => Ink::Mark,
+        GeneralCategory::SpaceSeparator => Ink::Space,
+        GeneralCategory::Control => Ink::Control,
+        GeneralCategory::Format if is_default_ignorable(c) => Ink::Ignorable,
+        GeneralCategory::Format => Ink::Format,
+        _ if is_default_ignorable(c) => Ink::Ignorable,
+        _ => Ink::Visible,
+    }
+}
+
+fn is_default_ignorable(c: char) -> bool {
+    CodePointSetData::new::<DefaultIgnorableCodePoint>().contains(c)
+}
+
+/// Whether every codepoint in `text` is undisplayable on its own.
+///
+/// True for a grapheme that would show the user nothing at all — the orphan case: `text` is
+/// non-empty, so the buffer is not empty and the caret can sit beside it, yet there is nothing to
+/// see. Empty text is **not** an orphan and returns `false`.
+pub(crate) fn is_undisplayable(text: &str) -> bool {
+    !text.is_empty() && text.chars().all(|c| ink(c).is_undisplayable_alone())
 }
 
 #[cfg(test)]

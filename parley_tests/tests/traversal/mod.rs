@@ -23,6 +23,8 @@
 //! - [`env`] — font tiers; the harness composes its own collections rather than using the
 //!   shared `create_font_context`, so it can vary font availability deliberately.
 //! - [`measure`] — observation primitives over a built `Layout` and `PlainEditor`.
+//! - [`hit`] — the pointer equivalent of `measure`: what a click at a point resolves to.
+//! - [`orphans`] — a search for graphemes that editing can strand with nothing left to render.
 //! - [`ops`] — the traversal operations under measurement, as data.
 //! - [`probe`] — establishes what the rest of the harness may assume, notably whether cluster
 //!   text ranges are font-invariant.
@@ -39,8 +41,10 @@ mod corpus;
 mod env;
 mod expectations;
 mod findings;
+mod hit;
 mod measure;
 mod ops;
+mod orphans;
 mod probe;
 mod reference;
 mod rules;

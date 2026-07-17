@@ -17,10 +17,12 @@ use crate::util::TestEnv;
 
 use super::corpus::CORPUS;
 use super::env::{FontTier, TraversalEnv};
+use super::hit::HitTable;
 use super::measure::{CursorDelta, Outcome, StepTable, Termination, Trajectory, render_codepoints};
 use super::ops::Op;
+use super::orphans::OrphanSearch;
 use super::probe::measured_axis;
-use super::reference::egc_count;
+use super::reference::{egc_boundaries, egc_count};
 
 /// The tier every behavior table is measured at.
 ///
@@ -461,4 +463,402 @@ fn traversal_motion_steps() {
 
     let axis = measured_axis(&mut t);
     env.check_text_snapshot(&format!("traversal/motion_steps__{axis}.md"), &out);
+}
+
+/// Where a click can put the caret.
+///
+/// Every other table here sweeps the keyboard. This one sweeps the pointer, which is a separate
+/// reachability question: `Cursor::from_point` is not implemented in terms of the motion ops and
+/// can land somewhere they never do.
+///
+/// **The column that matters is `mid_egc`**: caret positions a click can reach that are *not*
+/// grapheme boundaries — i.e. the places a user can put the caret inside one of their characters
+/// by clicking. `no_ink` counts how many of those sit beside a codepoint with no visual form, where
+/// there is nothing on screen to suggest the position exists.
+///
+/// # No segmenter axis
+///
+/// Unlike `traversal_press_counts` and `traversal_motion_steps`, this golden has no
+/// `__simple`/`__complex` suffix: hit testing reads cluster advances and never `is_word_boundary`,
+/// and the layout is built with wrapping off so line breaking cannot pull the dictionary in either.
+/// **Measured, not assumed** — the golden is byte-identical with and without `complex-scripts`. If
+/// that ever stops being true this test fails under `--all-features`, which is the correct outcome:
+/// it means hit testing grew a segmenter dependency worth knowing about.
+#[test]
+fn traversal_click_reachability() {
+    let mut env = TestEnv::new(test_name!(), None);
+    let mut t = TraversalEnv::new(TIER);
+
+    let mut out = String::new();
+    header(
+        &mut out,
+        "Where a click can put the caret",
+        "traversal_click_reachability",
+    );
+    writeln!(
+        &mut out,
+        "`Cursor::from_point` at points derived from every cluster's measured advance — each \
+         cluster is probed at fractions of its own width, never on an absolute pixel grid, so the \
+         table depends on the layout's structure and not on the font's exact metrics. \
+         `PlainEditor::move_to_point` and `Selection::from_point` both delegate here, so this is \
+         the click path."
+    )
+    .unwrap();
+    writeln!(&mut out).unwrap();
+    writeln!(
+        &mut out,
+        "- `bounds` — cluster boundaries: the caret positions that exist.\n\
+         - `hit` — how many of them some click actually produces.\n\
+         - `mid_egc` — **reachable positions that are not UAX #29 grapheme boundaries.** Each one \
+           is a place a click puts the caret inside a user-perceived character.\n\
+         - `no_ink` — of those, how many are adjacent to a codepoint with no visual form of its \
+           own (ZWJ, a variation selector, a combining mark, a tag character).\n\
+         - `slices` — whether the clusters covering one shaped glyph all report the same advance. \
+           `equal` is how a codepoint with no width of its own still gets a clickable region."
+    )
+    .unwrap();
+    writeln!(&mut out).unwrap();
+
+    let mut total_mid_egc = 0;
+    let mut total_no_ink = 0;
+    let mut entries_all_reachable = 0;
+    let mut entries_measured = 0;
+    let mut no_ink_with_width = Vec::new();
+
+    writeln!(
+        &mut out,
+        "| id | cps | bounds | hit | mid_egc | no_ink | slices |"
+    )
+    .unwrap();
+    writeln!(&mut out, "|---|---|---|---|---|---|---|").unwrap();
+
+    for e in CORPUS {
+        if e.text.is_empty() {
+            continue;
+        }
+        entries_measured += 1;
+        let table = HitTable::measure(&mut t, e.text);
+        let bounds = table.boundaries();
+        let hit = table.reachable_indices();
+        let egc: Vec<usize> = egc_boundaries(e.text);
+
+        let mid: Vec<usize> = hit.iter().copied().filter(|i| !egc.contains(i)).collect();
+        // A position is "no-ink adjacent" if the cluster starting or ending there has no visual
+        // form of its own.
+        let no_ink: Vec<usize> = mid
+            .iter()
+            .copied()
+            .filter(|i| {
+                table.clusters.iter().any(|c| {
+                    (c.range.start == *i || c.range.end == *i) && c.ink.is_undisplayable_alone()
+                })
+            })
+            .collect();
+
+        if bounds.iter().all(|b| hit.contains(b)) {
+            entries_all_reachable += 1;
+        }
+        total_mid_egc += mid.len();
+        total_no_ink += no_ink.len();
+
+        for c in &table.clusters {
+            if c.ink.is_undisplayable_alone() && !c.zero_advance {
+                no_ink_with_width.push((e.id, c.range.clone(), c.ink.slug()));
+            }
+        }
+
+        writeln!(
+            &mut out,
+            "| {} | {} | {} | {} | {} | {} | {} |",
+            e.id,
+            e.text.chars().count(),
+            bounds.len(),
+            hit.len(),
+            mid.len(),
+            no_ink.len(),
+            match table.equal_slices {
+                None => "n/a",
+                Some(true) => "equal",
+                Some(false) => "**unequal**",
+            }
+        )
+        .unwrap();
+    }
+
+    writeln!(&mut out).unwrap();
+    writeln!(&mut out, "## Per entry").unwrap();
+    writeln!(&mut out).unwrap();
+    writeln!(
+        &mut out,
+        "`ink` is what the cluster's codepoint renders as **on its own**, from Unicode — not a \
+         measurement of parley. `zero_adv` is parley's advance for it. A row with a no-ink class \
+         and `zero_adv = no` is a codepoint that draws nothing yet owns a clickable region."
+    )
+    .unwrap();
+    writeln!(&mut out).unwrap();
+
+    for e in CORPUS {
+        if e.text.chars().count() < 2 {
+            continue;
+        }
+        let table = HitTable::measure(&mut t, e.text);
+        let egc: Vec<usize> = egc_boundaries(e.text);
+
+        writeln!(&mut out, "### {}", e.id).unwrap();
+        writeln!(&mut out).unwrap();
+        writeln!(&mut out, "`{}`", render_codepoints(e.text)).unwrap();
+        writeln!(&mut out).unwrap();
+        writeln!(&mut out, "| cluster | ink | zero_adv | lig | glyphs |").unwrap();
+        writeln!(&mut out, "|---|---|---|---|---|").unwrap();
+        for c in &table.clusters {
+            writeln!(
+                &mut out,
+                "| {}..{} | {} | {} | {} | {} |",
+                c.range.start,
+                c.range.end,
+                c.ink.slug(),
+                if c.zero_advance { "**yes**" } else { "no" },
+                c.lig,
+                c.glyphs,
+            )
+            .unwrap();
+        }
+        writeln!(&mut out).unwrap();
+
+        writeln!(&mut out, "| position | egc bound | reachable by click |").unwrap();
+        writeln!(&mut out, "|---|---|---|").unwrap();
+        for b in table.boundaries() {
+            let affs: Vec<&str> = table
+                .reachable
+                .iter()
+                .filter(|p| p.index == b)
+                .map(|p| p.affinity)
+                .collect();
+            writeln!(
+                &mut out,
+                "| {} | {} | {} |",
+                b,
+                if egc.contains(&b) { "yes" } else { "**no**" },
+                if affs.is_empty() {
+                    String::from("**never**")
+                } else {
+                    affs.join(",")
+                }
+            )
+            .unwrap();
+        }
+        writeln!(&mut out).unwrap();
+    }
+
+    writeln!(&mut out, "## Summary").unwrap();
+    writeln!(&mut out).unwrap();
+    writeln!(
+        &mut out,
+        "- Every cluster boundary is reachable by some click on **{entries_all_reachable} of \
+         {entries_measured}** entries.\n\
+         - **{total_mid_egc}** reachable caret positions across the corpus are not grapheme \
+           boundaries: a click puts the caret inside a user-perceived character.\n\
+         - **{total_no_ink}** of those are adjacent to a codepoint with no visual form of its own.\n\
+         - **{}** clusters hold a codepoint that renders nothing on its own, yet were given a \
+           non-zero — therefore clickable — advance.",
+        no_ink_with_width.len()
+    )
+    .unwrap();
+    writeln!(&mut out).unwrap();
+    if !no_ink_with_width.is_empty() {
+        writeln!(&mut out, "| id | cluster | ink |").unwrap();
+        writeln!(&mut out, "|---|---|---|").unwrap();
+        for (id, range, class) in &no_ink_with_width {
+            writeln!(
+                &mut out,
+                "| {} | {}..{} | {} |",
+                id, range.start, range.end, class
+            )
+            .unwrap();
+        }
+    }
+
+    env.check_text_snapshot("traversal/click_reachability.md", &out);
+}
+
+/// Graphemes that `delete`/`backdelete` can strand with nothing to render.
+///
+/// A breadth-first search over **every** buffer the two ops can reach from every caret position,
+/// so a "no" here means no sequence of presses produces one, not that the sequence tried did not.
+/// Every witness is shortest-first.
+///
+/// The case this exists for: a buffer holding a lone U+200D. It is non-empty, the caret can sit
+/// either side of it, arrow keys spend a press crossing it — and there is nothing on screen.
+///
+/// No segmenter axis, for the same measured reason as [`traversal_click_reachability`]: `delete`
+/// and `backdelete` are codepoint-granular and consult no word segmenter, and the golden is
+/// byte-identical with and without `complex-scripts`. The word-deletion variants, which *would*
+/// depend on it, are deliberately out of scope — see `orphans.rs`.
+#[test]
+fn traversal_orphaned_graphemes() {
+    let mut env = TestEnv::new(test_name!(), None);
+    let mut t = TraversalEnv::new(TIER);
+
+    let mut out = String::new();
+    header(
+        &mut out,
+        "Graphemes that editing can strand with nothing to render",
+        "traversal_orphaned_graphemes",
+    );
+    writeln!(
+        &mut out,
+        "Breadth-first search over every buffer reachable from the entry by `delete` and \
+         `backdelete` at any caret position. A grapheme is **orphaned** when every codepoint left \
+         in it has no visual form of its own — a lone ZWJ, a lone variation selector, a lone tag \
+         character. The buffer is not empty and the caret still has to cross it, but the user sees \
+         nothing there."
+    )
+    .unwrap();
+    writeln!(&mut out).unwrap();
+    writeln!(
+        &mut out,
+        "- `states` — distinct buffers reachable. The search is exhaustive over them.\n\
+         - `orphans` — distinct undisplayable graphemes found across all of them.\n\
+         - `classes` — how many distinct *kinds* those fall into. The per-entry tables list one \
+           example of each kind rather than every combination; see `orphans.rs`.\n\
+         - `presses` — length of the **shortest** press sequence that produces one. `0` means the \
+           entry already contained one before any editing, which is a property of the corpus and \
+           not of parley.\n\
+         - Whitespace is not an orphan: a lone newline or tab is an ordinary buffer.\n\
+         - Word-deletion variants are out of scope; see `orphans.rs`."
+    )
+    .unwrap();
+    writeln!(&mut out).unwrap();
+
+    let mut with_orphans = Vec::new();
+    let mut created_by_editing = Vec::new();
+    let mut one_press = Vec::new();
+    let mut any_truncated = false;
+
+    writeln!(
+        &mut out,
+        "| id | cps | states | orphans | classes | presses |"
+    )
+    .unwrap();
+    writeln!(&mut out, "|---|---|---|---|---|---|").unwrap();
+
+    let mut details = String::new();
+
+    for e in CORPUS {
+        if e.text.is_empty() {
+            continue;
+        }
+        let search = OrphanSearch::run(&mut t, e.text);
+        any_truncated |= search.truncated;
+
+        let shortest = search.by_class.iter().map(|o| o.witness.len()).min();
+        if !search.by_class.is_empty() {
+            with_orphans.push(e.id);
+            if search.by_class.iter().any(|o| !o.witness.is_empty()) {
+                created_by_editing.push(e.id);
+            }
+            if shortest == Some(1) {
+                one_press.push(e.id);
+            }
+        }
+
+        writeln!(
+            &mut out,
+            "| {} | {} | {} | {} | {} | {} |",
+            e.id,
+            e.text.chars().count(),
+            search.states,
+            search.distinct,
+            search.by_class.len(),
+            match shortest {
+                None => String::from("-"),
+                Some(n) => n.to_string(),
+            }
+        )
+        .unwrap();
+
+        if search.by_class.is_empty() {
+            continue;
+        }
+        writeln!(&mut details, "### {}", e.id).unwrap();
+        writeln!(&mut details).unwrap();
+        writeln!(&mut details, "`{}`", render_codepoints(e.text)).unwrap();
+        writeln!(&mut details).unwrap();
+        if search.distinct > search.by_class.len() {
+            writeln!(
+                &mut details,
+                "{} distinct orphans, grouped into {} kinds; one shortest-witness example each.",
+                search.distinct,
+                search.by_class.len()
+            )
+            .unwrap();
+            writeln!(&mut details).unwrap();
+        }
+        writeln!(
+            &mut details,
+            "| classes | example | resulting buffer | shortest witness |"
+        )
+        .unwrap();
+        writeln!(&mut details, "|---|---|---|---|").unwrap();
+        for o in &search.by_class {
+            writeln!(
+                &mut details,
+                "| {} | `{}` | `{}` | {} |",
+                o.classes,
+                o.egc,
+                o.buffer,
+                o.render_witness()
+            )
+            .unwrap();
+        }
+        writeln!(&mut details).unwrap();
+    }
+
+    writeln!(&mut out).unwrap();
+    writeln!(&mut out, "## Per entry").unwrap();
+    writeln!(&mut out).unwrap();
+    if details.is_empty() {
+        writeln!(
+            &mut out,
+            "(no entry can be left holding an invisible grapheme)"
+        )
+        .unwrap();
+        writeln!(&mut out).unwrap();
+    } else {
+        out.push_str(&details);
+    }
+
+    writeln!(&mut out, "## Summary").unwrap();
+    writeln!(&mut out).unwrap();
+    writeln!(
+        &mut out,
+        "- **{} entries** can hold a grapheme with nothing to render.\n\
+         - **{} of those reach one by editing** — the original text did not contain it, and \
+           `delete`/`backdelete` produced it: {}.\n\
+         - **{} need a single press** to strand one: {}.",
+        with_orphans.len(),
+        created_by_editing.len(),
+        if created_by_editing.is_empty() {
+            String::from("(none)")
+        } else {
+            created_by_editing.join(", ")
+        },
+        one_press.len(),
+        if one_press.is_empty() {
+            String::from("(none)")
+        } else {
+            one_press.join(", ")
+        }
+    )
+    .unwrap();
+    if any_truncated {
+        writeln!(&mut out).unwrap();
+        writeln!(
+            &mut out,
+            "⚠ **The state cap bound.** The search was not exhaustive; see `MAX_STATES`."
+        )
+        .unwrap();
+    }
+
+    env.check_text_snapshot("traversal/orphaned_graphemes.md", &out);
 }

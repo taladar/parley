@@ -503,7 +503,7 @@ pub(crate) fn render_codepoints(text: &str) -> String {
 /// binary, so one unwind would take every other corpus entry with it and we would measure nothing.
 /// The message is normalized to just its payload — a file path or line number in a golden would
 /// churn on every unrelated refactor.
-fn with_panics_silenced<T>(f: impl FnOnce() -> T) -> Result<T, String> {
+pub(crate) fn with_panics_silenced<T>(f: impl FnOnce() -> T) -> Result<T, String> {
     let prev = std::panic::take_hook();
     std::panic::set_hook(Box::new(|_| {}));
     let result = catch_unwind(AssertUnwindSafe(f));
