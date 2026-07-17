@@ -40,8 +40,12 @@
 
 /// A text traversal operation that at least one authority has an opinion about.
 ///
-/// Deliberately smaller than parley's full API surface: line motion, hit-testing and AccessKit are
-/// measured by the harness but no authority makes script-specific claims about them.
+/// Deliberately smaller than parley's full API surface: line motion and AccessKit are measured by
+/// the harness but no authority makes script-specific claims about them.
+///
+/// [`Self::HitTest`] used to be on that list. It was wrong — the authorities are dense here, they
+/// simply live in different documents than the key-press ones (the Unicode **core spec** rather than
+/// UAX #29, and the **OpenType** spec rather than Unicode at all). See `EXPECTATIONS.md` §16.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub(crate) enum OpId {
     /// Backspace. The contested one.
@@ -54,6 +58,11 @@ pub(crate) enum OpId {
     PreviousVisual,
     /// Shift+arrow selection extension.
     ExtendSelection,
+    /// Clicking: `Cursor::from_point`. The **pointer**, not a key.
+    ///
+    /// Its own op because the authorities answer it differently from arrow keys, and because every
+    /// surveyed engine routes it through a different code path with a different guarantee.
+    HitTest,
 }
 
 impl OpId {
@@ -64,6 +73,7 @@ impl OpId {
         Self::NextVisual,
         Self::PreviousVisual,
         Self::ExtendSelection,
+        Self::HitTest,
     ];
 
     pub(crate) fn slug(self) -> &'static str {
@@ -73,6 +83,7 @@ impl OpId {
             Self::NextVisual => "next_visual",
             Self::PreviousVisual => "previous_visual",
             Self::ExtendSelection => "extend_selection",
+            Self::HitTest => "hit_test",
         }
     }
 }
@@ -84,6 +95,19 @@ pub(crate) enum Authority {
     Uax29,
     /// UTS #51 conformance clause C2b. The only *requirement* in this list.
     Uts51C2b,
+    /// The Unicode Standard, Chapter 5 §5.11 "Editing and Selection".
+    ///
+    /// **Not** UAX #29, and the distinction matters: this is the only Unicode text that addresses a
+    /// caret placed by *pointing*, and Chapter 5 is explicitly non-normative — "not binding on the
+    /// implementer, but … intended to represent best practice". It is the source that describes
+    /// parley's even-division approach ("Nonlinear Boundaries") as a sanctioned option.
+    UnicodeCore511,
+    /// OpenType GDEF `LigCaretList` — the font-data answer to intra-ligature caret placement.
+    ///
+    /// The only authority here that is not Unicode and not an editor. It speaks to the *method*
+    /// (font-provided carets vs dividing the advance), never to whether a caret may be inside a
+    /// grapheme cluster.
+    OpenTypeGdef,
     /// AOSP `BaseKeyListener.getOffsetForBackspaceKey`, via xi-editor #837 and xilem #303.
     AndroidAosp,
     /// Blink's `BackspaceStateMachine` — AOSP's machine with three documented divergences.
@@ -108,6 +132,8 @@ impl Authority {
     pub(crate) const ALL: &'static [Self] = &[
         Self::Uax29,
         Self::Uts51C2b,
+        Self::UnicodeCore511,
+        Self::OpenTypeGdef,
         Self::AndroidAosp,
         Self::Blink,
         Self::GtkPango,
@@ -123,6 +149,8 @@ impl Authority {
         match self {
             Self::Uax29 => "uax29",
             Self::Uts51C2b => "uts51_c2b",
+            Self::UnicodeCore511 => "unicode_core_5_11",
+            Self::OpenTypeGdef => "opentype_gdef",
             Self::AndroidAosp => "aosp",
             Self::Blink => "blink",
             Self::GtkPango => "pango",
@@ -200,10 +228,27 @@ pub(crate) enum ExpectedOutcome {
     OneCodepoint,
     /// One whole *typographic unit*, which for Khmer/Myanmar is larger than a grapheme cluster.
     WholeTypographicUnit,
+
+    // -- Hit-test outcomes. A click has no "press count", so these are shaped differently.
+    /// A click must resolve to a UAX #29 grapheme cluster boundary; intra-cluster offsets are not
+    /// valid cursor positions.
+    SnapToGraphemeBoundary,
+    /// A caret inside a grapheme cluster is an allowed design choice.
+    IntraClusterPermitted,
+    /// A caret inside a **ligature** is expected, but its position must come from the font's GDEF
+    /// `LigCaretList` rather than from dividing the advance.
+    ///
+    /// Deliberately distinct from [`Self::IntraClusterPermitted`]: a ligature is a rendering unit
+    /// and a grapheme cluster is a text unit, and `fi` is one ligature spanning **two** graphemes.
+    /// Conflating them is how "GDEF permits intra-ligature carets" becomes the false claim "GDEF
+    /// permits intra-grapheme carets".
+    FontProvidedLigatureCaret,
+
     /// The source addresses this pair but declines to prescribe.
     ///
     /// Distinct from absence: absence means nobody spoke, this means somebody explicitly refused
-    /// to. UAX #29 on backspace is the motivating case.
+    /// to. UAX #29 on backspace is the motivating case; UAX #29 on cursor placement ("Detailed
+    /// cursor placement depends on the text editing framework") is the other.
     ExplicitlyUnspecified,
 }
 
@@ -237,6 +282,96 @@ const UAX29_CURSOR_APPROXIMATION: Citation = Citation {
     quote: "Grapheme clusters can only provide an approximation of where to put cursors.",
     url: "https://www.unicode.org/reports/tr29/",
     modality: Modality::Permitted,
+};
+
+// -- Hit testing. See EXPECTATIONS.md §16.
+
+/// UAX #29 handing the entire question to the implementation.
+const UAX29_CURSOR_DELEGATION: Citation = Citation {
+    quote: "Grapheme clusters can only provide an approximation of where to put cursors. Detailed \
+            cursor placement depends on the text editing framework. The text editing framework \
+            determines where the edges of glyphs are, and how they correspond to the underlying \
+            characters, based on information supplied by the lower-level text rendering engine and \
+            font.",
+    url: "https://www.unicode.org/reports/tr29/",
+    modality: Modality::Observed,
+};
+
+/// The Unicode core spec describing parley's algorithm as a sanctioned option.
+///
+/// The one Unicode text that addresses a caret placed by pointing. Chapter 5 is explicitly
+/// non-normative — "not binding on the implementer, but … intended to represent best practice" —
+/// so this is [`Modality::Permitted`] and can never be more.
+const CORE_511_NONLINEAR_BOUNDARIES: Citation = Citation {
+    quote: "Nonlinear Boundaries. Use of nonlinear boundaries divides any stacked element into \
+            parts. For example, picking a point halfway across a lam + meem ligature can represent \
+            the division between the characters. One can either allow highlighting with multiple \
+            rectangles or use another method such as coloring the individual characters.",
+    url: "https://www.unicode.org/versions/Unicode16.0.0/core-spec/chapter-5/",
+    modality: Modality::Permitted,
+};
+
+/// OpenType naming parley's failure mode, unprompted, with the same shape of example.
+const GDEF_MIDPOINT_IS_AMBIGUOUS: Citation = Citation {
+    quote: "Without a ligature caret list table, the client would have to define caret positions \
+            without knowing the positions of the ligature components. The resulting highlighting or \
+            hit-testing might be ambiguous. For example, suppose a client places a caret at the \
+            midpoint position along the width of a hypothetical \u{201C}wi\u{201D} ligature. \
+            Because the \u{201C}w\u{201D} is wider than the \u{201C}i,\u{201D} that position would \
+            not clearly indicate which component is selected. Instead, for accurate selection, the \
+            caret should be moved to the right so that either the \u{201C}w\u{201D} or \
+            \u{201C}i\u{201D} could be clearly highlighted.",
+    url: "https://learn.microsoft.com/en-us/typography/opentype/spec/gdef",
+    modality: Modality::Recommended,
+};
+
+/// The sharpest sentence in the hit-test research.
+///
+/// Documented on `QTextLayout::isValidCursorPosition`, **not** on `QTextLine::xToCursor` — Qt's
+/// hit-test entry point says nothing about clusters at all.
+const QT_NEVER_BETWEEN_THEM: Citation = Citation {
+    quote: "A grapheme cluster is a sequence of two or more Unicode characters that form one \
+            indivisible entity on the screen. For example the latin character `\\unicode{0xC4}' can \
+            be represented in Unicode by two characters, `A' (0x41), and the combining diaeresis \
+            (0x308). A text cursor can only validly be positioned before or after these two \
+            characters, never between them since that wouldn't make sense. In indic languages every \
+            syllable forms a grapheme cluster.",
+    url: "https://doc.qt.io/qt-6/qtextlayout.html#isValidCursorPosition",
+    modality: Modality::Observed,
+};
+
+/// Android's equivalent, and like Qt's it is documented on a neighbouring API rather than on the
+/// hit-test entry point.
+const ANDROID_AVOIDS_MID_CLUSTER: Citation = Citation {
+    quote: "Returns the next cursor position in the run. This avoids placing the cursor between \
+            surrogates, between characters that form conjuncts, between base characters and \
+            combining marks, or within a reordering cluster.",
+    url: "https://developer.android.com/reference/android/graphics/Paint#getTextRunCursor(char[],\
+          %20int,%20int,%20boolean,%20int,%20int)",
+    modality: Modality::Observed,
+};
+
+/// Pango's public hit-test API, whose out-parameter cannot express an intra-cluster position.
+///
+/// The contrast that defines this section: Pango's *private* `pango_glyph_string_x_to_index`
+/// divides clusters into equal portions exactly as parley does, and documents that "the returned
+/// value may not be a valid cursor position".
+const PANGO_TRAILING_IS_WHOLE_GRAPHEME: Citation = Citation {
+    quote: "location to store a integer indicating where in the grapheme the user clicked. It will \
+            either be zero, or the number of characters in the grapheme. 0 represents the leading \
+            edge of the grapheme.",
+    url: "https://docs.gtk.org/Pango/method.Layout.xy_to_index.html",
+    modality: Modality::Observed,
+};
+
+/// Blink's subdivision option — the same idea as parley's, over a different unit.
+const BLINK_BREAK_GLYPHS_BY_GRAPHEME: Citation = Citation {
+    quote: "BreakGlyphsOption - allows OffsetForPosition to consider graphemes separations inside \
+            a glyph. It allows the function to return a point inside a glyph when multiple \
+            graphemes share a glyph (for example, in a ligature)",
+    url: "https://chromium.googlesource.com/chromium/src/+/main/third_party/blink/renderer/\
+          platform/fonts/shaping/shape_result.h",
+    modality: Modality::Observed,
 };
 
 const UAX29_UNITS_FOR_OPS: Citation = Citation {
@@ -838,6 +973,86 @@ pub(crate) const EXPECTATIONS: &[Expectation] = &[
         note: "Even for cursor motion, UAX #29 hedges. Every source still agrees motion should be \
                AT LEAST grapheme-granular; the dispute is only whether it should be coarser.",
     },
+    // -- Hit testing. See EXPECTATIONS.md §16.
+    //
+    // Note what is NOT here: a `Uts51C2b` row. C2b's "editing purposes (cursor movement, deletion,
+    // line breaking, and so on)" neither names nor excludes pointing, and "editing purposes" is
+    // never defined in UTS #51. That is an ambiguity, not an `ExplicitlyUnspecified`, and inventing
+    // a row for it would promote an inference to a citation. §16.4 records the reasoning.
+    Expectation {
+        corpus_id: "*",
+        op: OpId::HitTest,
+        authority: Authority::Uax29,
+        expected: ExpectedOutcome::ExplicitlyUnspecified,
+        citation: UAX29_CURSOR_DELEGATION,
+        note: "UAX #29 delegates hit testing entirely. The word 'caret' does not appear in it, and \
+               it contains no discussion of pointing. Its conformance clauses bind boundary \
+               DETERMINATION only, never what an editor does with a boundary.",
+    },
+    Expectation {
+        corpus_id: "*",
+        op: OpId::HitTest,
+        authority: Authority::UnicodeCore511,
+        expected: ExpectedOutcome::IntraClusterPermitted,
+        citation: CORE_511_NONLINEAR_BOUNDARIES,
+        note: "parley's strongest defence: Unicode describes dividing a ligature at a picked point \
+               as one of three sanctioned options. Two caveats that must travel with it — Chapter \
+               5 is explicitly NOT normative, and the option obliges the implementation to solve \
+               the highlighting it creates ('multiple rectangles'), which parley does not.",
+    },
+    Expectation {
+        corpus_id: "ligature_fi",
+        op: OpId::HitTest,
+        authority: Authority::OpenTypeGdef,
+        expected: ExpectedOutcome::FontProvidedLigatureCaret,
+        citation: GDEF_MIDPOINT_IS_AMBIGUOUS,
+        note: "The spec's own worked example is this entry's shape: 'f' is wider than 'i', and \
+               parley splits the ligature exactly in half. Measured: Roboto ships NO LigCaretList \
+               (ligCaretListOffset = 0), so nothing better is available here — but parley consults \
+               no GDEF at all, and NotoKufiArabic-Regular does ship caret data.",
+    },
+    Expectation {
+        corpus_id: "latin_e_combining_acute",
+        op: OpId::HitTest,
+        authority: Authority::Qt,
+        expected: ExpectedOutcome::SnapToGraphemeBoundary,
+        citation: QT_NEVER_BETWEEN_THEM,
+        note: "Qt's doc uses A + U+0308; this entry is e + U+0301, the same shape. Measured, parley \
+               reaches index 1 by click in BOTH affinities — the position Qt calls one that \
+               'wouldn't make sense'.",
+    },
+    Expectation {
+        corpus_id: "latin_e_combining_acute",
+        op: OpId::HitTest,
+        authority: Authority::AndroidAosp,
+        expected: ExpectedOutcome::SnapToGraphemeBoundary,
+        citation: ANDROID_AVOIDS_MID_CLUSTER,
+        note: "'between base characters and combining marks' is this entry exactly. Android's snap \
+               is font-DEPENDENT (minikin decides on glyph advances), unlike Qt's and the \
+               browsers'; that only matters for emoji, not here.",
+    },
+    Expectation {
+        corpus_id: "*",
+        op: OpId::HitTest,
+        authority: Authority::GtkPango,
+        expected: ExpectedOutcome::SnapToGraphemeBoundary,
+        citation: PANGO_TRAILING_IS_WHOLE_GRAPHEME,
+        note: "The closest analogue to parley's architecture, and the reason §16 says parley stops \
+               one step early: Pango's PRIVATE primitive divides clusters evenly exactly as parley \
+               does and documents the result as possibly not a valid cursor position; its PUBLIC \
+               API snaps. parley exposes the primitive's answer.",
+    },
+    Expectation {
+        corpus_id: "*",
+        op: OpId::HitTest,
+        authority: Authority::Blink,
+        expected: ExpectedOutcome::SnapToGraphemeBoundary,
+        citation: BLINK_BREAK_GLYPHS_BY_GRAPHEME,
+        note: "The whole divergence in one word: Blink divides a shared glyph's advance by \
+               GRAPHEMES, parley by CHARACTERS. Identical for ligature_fi (2 of each); different \
+               for every combining mark and emoji sequence, where graphemes == 1 and Blink's \
+               `if (graphemes > 1)` guard skips subdivision entirely.",
+    },
 ];
 
 #[cfg(test)]
@@ -915,6 +1130,75 @@ mod tests {
                      but a draft"
                 );
             }
+        }
+    }
+
+    /// UTS #51 must never be recorded as prescribing anything about hit testing.
+    ///
+    /// C2b's "editing purposes (cursor movement, deletion, line breaking, and so on)" neither names
+    /// nor excludes pointing, and "editing purposes" is defined nowhere in UTS #51. Reading it as
+    /// "a click must snap to emoji-sequence boundaries" is an inference — a reasonable one, but the
+    /// same *kind* of step as reading UAX #29's "might" as a "must", which is the error this file
+    /// exists to prevent. The absence of a `Uts51C2b`/`HitTest` row is deliberate; this test is
+    /// what stops it being helpfully filled in later. See `EXPECTATIONS.md` §16.4.
+    #[test]
+    fn traversal_expectations_uts51_does_not_prescribe_hit_testing() {
+        for e in EXPECTATIONS {
+            assert!(
+                !(e.authority == Authority::Uts51C2b && e.op == OpId::HitTest),
+                "{}: UTS #51 C2b does not address hit testing. Its 'editing purposes' list is \
+                 'cursor movement, deletion, line breaking, and so on' — pointing is neither named \
+                 nor excluded, and C2b is an optional capability (only C2a display is mandatory). \
+                 If parley wants to argue a click should snap inside emoji, that argument is an \
+                 inference and belongs in prose, not in a citation.",
+                e.corpus_id
+            );
+        }
+    }
+
+    /// The hit-test authorities must stay non-binding.
+    ///
+    /// Nothing *requires* a click to snap to a grapheme boundary: UAX #29 delegates, the Unicode
+    /// core spec's §5.11 is explicitly not normative, and CSSOM View puts hit testing out of scope.
+    /// The unanimity recorded in §16 is convention among implementations, and stating it as
+    /// conformance would be exactly the overreach §1 warns about.
+    #[test]
+    fn traversal_expectations_no_authority_requires_a_hit_test_snap() {
+        for e in EXPECTATIONS {
+            if e.op != OpId::HitTest {
+                continue;
+            }
+            assert_ne!(
+                e.citation.modality,
+                Modality::Required,
+                "{}/{:?}: no standard requires anything of hit testing — UAX #29 delegates it, \
+                 core spec Chapter 5 is non-normative best practice, and CSSOM View declares hit \
+                 testing out of scope. Every engine agreeing is convention, not conformance.",
+                e.corpus_id,
+                e.authority
+            );
+        }
+    }
+
+    /// The Unicode core spec's §5.11 may only ever be cited as a permission.
+    ///
+    /// It is the one source that sanctions parley's current behaviour, which makes it the one most
+    /// likely to be over-claimed in parley's favour. Chapter 5 opens by disclaiming itself: "These
+    /// recommended guidelines are not normative and are not binding on the implementer."
+    #[test]
+    fn traversal_expectations_core_spec_ch5_is_never_binding() {
+        for e in EXPECTATIONS {
+            if e.authority != Authority::UnicodeCore511 {
+                continue;
+            }
+            assert_eq!(
+                e.citation.modality,
+                Modality::Permitted,
+                "{}: Unicode core spec Chapter 5 is explicitly non-normative best practice and \
+                 cannot be cited as a requirement or a recommendation — not even for the option \
+                 parley happens to implement",
+                e.corpus_id
+            );
         }
     }
 

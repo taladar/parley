@@ -855,13 +855,470 @@ argues the Hangul row favours PR #693.
 
 ---
 
-## 16. Source index
+## 16. Hit testing — where a *click* puts the caret
+
+This section is the desired-behavior side of `click_reachability.md`. It is a separate question from
+every other section: those are about **keys**, this is about the **pointer**, and the authorities
+answer them differently. `expectations.rs` previously asserted that "no authority makes
+script-specific claims about hit-testing". That was wrong, and this section is what replaced it.
+
+### ⭐ 16.1 The finding, in one paragraph
+
+Every implementation surveyed here **divides a cluster's advance into equal parts** exactly as parley
+does — Pango, Qt and (via a different route) Android all do it. The difference is what they do next:
+each one **snaps the result to a valid cursor position** before returning it, and each documents the
+unsnapped value as an internal quantity that is *not* a cursor position. parley does the dividing and
+not the snapping, and returns the intermediate value from its public API. So the divergence is not
+"parley computes it differently"; it is **parley stops one step early**.
+
+Unicode does not forbid parley's answer — the core spec explicitly lists it as one of three options
+(§16.3). But that option carries obligations parley does not meet, and **no surveyed implementation
+exposes it**.
+
+### 16.2 UAX #29 — descriptive, and delegates the whole question
+
+The cursor sentences are all one paragraph in §3. Verbatim, in full:
+
+> "Grapheme clusters can only provide an approximation of where to put cursors. Detailed cursor
+> placement depends on the text editing framework. The text editing framework determines where the
+> edges of glyphs are, and how they correspond to the underlying characters, based on information
+> supplied by the lower-level text rendering engine and font. For example, the text editing framework
+> must know if a digraph is represented as a single glyph in the font, and therefore may not be able
+> to position a cursor at the proper position separating its two components. That framework must also
+> be able to determine display representation in cases where two glyphs overlap—this is true
+> generally when a character is displayed together with a subsequent nonspacing mark, but must also
+> be determined in detail for complex script rendering. For cursor placement, grapheme clusters
+> boundaries can only supply an approximate guide for cursor placement using least-common-denominator
+> fonts for the script."
+
+("grapheme clusters boundaries" is the spec's own typo. Preserved.)
+
+⚠ **Do not overread the digraph sentence.** It is tempting to cite "may not be able to position a
+cursor at the proper position separating its two components" as UAX #29 blessing intra-cluster
+carets. It is not: a Slovak `ch` digraph is **two grapheme clusters rendered as one glyph**, so that
+sentence is about a caret inside a *glyph*, not inside a *grapheme cluster*. UAX #29 says so directly:
+
+> "Display of Grapheme Clusters. Grapheme clusters are not the same as ligatures. For example, the
+> grapheme cluster “ch” in Slovak is not normally a ligature and, conversely, the ligature “fi” is
+> not a grapheme cluster."
+
+**Modality: none of it binds.** UAX #29's conformance clauses constrain boundary *determination*
+only — they say an implementation "shall choose" a rule set to decide "whether an offset … is a
+boundary", and nothing about what you then do with one. The word **"caret" does not appear in UAX #29
+at all**, and it contains no discussion of hit testing, mouse-to-caret mapping, or pointing.
+
+### ⭐ 16.3 The Unicode core spec §5.11 — the one place pointing is addressed
+
+Not UAX #29. **The Unicode Standard, Chapter 5, §5.11 "Editing and Selection"** is the only Unicode
+text that addresses a pointer-placed caret, and it is the closest thing anywhere to a description of
+what parley does. It names **mouse selection** in the opening:
+
+> "The user expects them to behave as units in terms of mouse selection, arrow key movement,
+> backspacing, and so on."
+
+It then lays out **three** options, of which parley implements the third:
+
+> "Linear Boundaries. Use of linear boundaries treats the entire width of the resultant glyph as
+> belonging to the first character of the sequence, and the remaining characters in the backing-store
+> representation as having no width and being visually afterward."
+
+> "Stacked Boundaries. Stacked boundaries are generally somewhat finer than cluster boundaries.
+> Free-standing elements (such as vowel sign a in Devanagari) can be independently selected, but any
+> elements that “stack” (including vertical ligatures such as Arabic lam + meem in Figure 5-3) can be
+> selected only as a single unit. Stacked boundaries treat default grapheme clusters as single
+> entities, much like composite characters."
+
+> "Nonlinear Boundaries. Use of nonlinear boundaries divides any stacked element into parts. For
+> example, picking a point halfway across a lam + meem ligature can represent the division between
+> the characters. One can either allow highlighting with multiple rectangles or use another method
+> such as coloring the individual characters."
+
+**"picking a point halfway across a lam + meem ligature" is parley's algorithm, described by
+Unicode, as a sanctioned option.** This is the strongest defence parley has and it should not be
+lost. But read the second sentence: choosing nonlinear boundaries obliges you to solve the
+*rendering* problem it creates — "highlighting with multiple rectangles", or per-character colouring.
+Nonlinear boundaries are a package deal, and parley has taken the caret half without the
+highlighting half.
+
+And the modality — this governs the whole chapter:
+
+> "These recommended guidelines are not normative and are not binding on the implementer, but are
+> intended to represent best practice."
+
+§5.11 closes by explicitly declining to pick one:
+
+> "Just as there is no single notion of text element, so there is no single notion of editing
+> character boundaries. At different times, users may want different degrees of granularity in the
+> editing process."
+
+**So Unicode permits all three and requires none — for hit testing exactly as for backspace.** The
+pattern of this whole document repeats.
+
+### 16.4 UTS #51 C2b — what it does *not* say
+
+C2b is quoted throughout this document as the one binding clause. For hit testing it is **weaker than
+it first appears**, in two ways, and overreaching here would be the same error §1 warns about.
+
+First, **C2b is a capability, not a standalone requirement.** The "shall" lives in C2, and only the
+*display* capability is mandatory:
+
+> "C2. An implementation claiming conformance to this specification shall identify which of the
+> capabilities specified below are supported for which emoji sets ED-20 through ED-25. This must
+> include at least the C2a display capability for set ED-20 basic emoji set."
+
+An implementation may conform to UTS #51 while claiming no editing capability at all.
+
+Second, **"editing purposes" is never defined** in UTS #51 beyond C2b's own parenthetical:
+
+> "C2b editing | The implementation treats each of the characters and sequences in the specified set
+> as an indivisible unit for editing purposes (cursor movement, deletion, line breaking, and so on)."
+
+The enumerated list is *cursor movement, deletion, line breaking*. **"Hit testing", "click", "mouse"
+and "pointer" appear nowhere in UTS #51's conformance section.** The trailing "and so on" is
+open-ended, so the clause neither includes nor excludes click-placement.
+
+⚠ **"C2b requires a click to snap to emoji-sequence boundaries" is an inference, not a quote.** It is
+a reasonable inference — placing a caret is hard to describe as anything but cursor movement — but it
+must be labelled as one.
+
+**So `expectations.rs` carries no `Uts51C2b` row for `HitTest` at all, deliberately.** That is not an
+oversight to be helpfully filled in later. The file's convention is that absence means nobody spoke,
+and `ExplicitlyUnspecified` means a source addressed the pair and declined — C2b does neither. It is
+*ambiguous*, which the data model has no cell for and this paragraph exists to record. Anyone adding
+that row should read §1's warning about modality first: promoting an ambiguity to a requirement is
+the same error as promoting UAX #29's "might" to a "must".
+
+### ⭐ 16.5 OpenType GDEF — the method question, and the "wi" example
+
+The correct way to place a caret inside a ligature is **font-provided data**, not geometry. The GDEF
+table has a subtable for precisely this:
+
+> "The ligature caret list table contains positioning data for ligature carets, which the
+> text-processing client uses on screen to select and highlight the individual components of a
+> ligature glyph."
+
+And the rationale is a direct, unprompted description of parley's failure mode:
+
+> "Without a ligature caret list table, the client would have to define caret positions without
+> knowing the positions of the ligature components. The resulting highlighting or hit-testing might
+> be ambiguous. For example, suppose a client places a caret at the midpoint position along the width
+> of a hypothetical “wi” ligature. Because the “w” is wider than the “i,” that position would not
+> clearly indicate which component is selected. Instead, for accurate selection, the caret should be
+> moved to the right so that either the “w” or “i” could be clearly highlighted."
+
+The harness measures parley doing exactly this, on an entry with the spec's own shape: Roboto ligates
+`fi` into one glyph, `f` is wider than `i`, and parley splits the ligature into **equal** halves —
+`click_reachability.md` records that discretely as `slices = equal` for `ligature_fi`, and every
+other ligature group in the corpus. The midpoint is in the wrong place for the same reason the spec's
+`w`/`i` midpoint is.
+
+(The individual advances are deliberately **not** quoted here. `measure.rs` bans floats from recorded
+data because they depend on font, rasteriser and platform — a number typed into this paragraph would
+be the same hazard with none of the protection, and would go stale silently. `slices = equal` is the
+committed, regenerable form of the same fact.)
+
+HarfBuzz exposes the remedy, and states the arithmetic that makes even division wrong:
+
+> "Fetches a list of the caret positions defined for a ligature glyph in the GDEF table of the font.
+> The list returned will begin at the offset provided.
+>
+> Note that a ligature that is formed from n characters will have n-1 caret positions. The first
+> character is not represented in the array, since its caret position is the glyph position."
+
+**Measured, not assumed** — three facts about this workspace, checked rather than reasoned:
+
+- **parley never consults GDEF ligature carets.** No occurrence of `LigCaretList`, `ligature_caret`
+  or `GDEF` exists anywhere in `parley/`, `parley_core/` or `fontique/`.
+- **Roboto ships no ligature caret data.** `GDEF v1.2`, `ligCaretListOffset = 0`. So for the `fi`
+  case there is nothing to consult, and even division is the only option available — parley's answer
+  is not worse than anyone else's *here*.
+- **Noto Kufi Arabic does.** `GDEF v1.2` with a `LigCaretList` covering 2 ligature glyphs
+  (`caretCount` 3 and 2, i.e. 4- and 3-component ligatures). The corpus does not reach them —
+  `arabic_lam_alef` measures as two glyphs, not a ligature — but the data is there and parley would
+  not read it if it were.
+
+⚠ **The accurate claim is about the method, not the position.** GDEF does **not** say a caret may
+never be inside a ligature; it says the opposite — carets inside ligatures are expected, and should
+come from font data. Even division is the fallback the spec's own example shows can select the wrong
+component. Do not cite GDEF as "the caret must never land inside a ligature".
+
+### ⭐ 16.6 Pango — parley's algorithm is Pango's *private primitive*
+
+This is the most useful comparison in the section, because Pango has **both halves** and parley has
+one. Pango's low-level primitive divides evenly and says so:
+
+> "Convert from x offset to character position.
+>
+> Character positions are computed by dividing up each cluster into equal portions. In scripts where
+> positioning within a cluster is not allowed (such as Thai), the returned value may not be a valid
+> cursor position; the caller must combine the result with the logical attributes for the text to
+> compute the valid cursor position."
+
+That is `pango_glyph_string_x_to_index` — **parley's `Cluster::from_point`, almost exactly**, down to
+the even division. Note what the docs do with it: *"the returned value may not be a valid cursor
+position; the caller must combine the result with the logical attributes"*.
+
+Pango's **public** hit-test API does that combining. `pango_layout_xy_to_index`'s `trailing`
+out-parameter cannot express an intra-cluster position at all:
+
+> "@trailing: (out): location to store a integer indicating where in the grapheme the user clicked.
+> It will either be zero, or the number of characters in the grapheme. 0 represents the leading edge
+> of the grapheme."
+
+**"either zero, or the number of characters in the grapheme"** — there is no intermediate value. The
+implementation walks the raw result back to the nearest `is_cursor_position` and forward to the next,
+and returns the grapheme start with `trailing` ∈ {0, grapheme length}. The even division survives
+only as a *which-half-did-you-click* hint and is discarded as a position. And Pango's definition of a
+legal caret position is UAX #29's:
+
+> "@is_cursor_position: if set, cursor can appear in front of character. i.e. this is a grapheme
+> boundary, or the first character in the text. This flag implements Unicode's [Grapheme Cluster
+> Boundaries](http://www.unicode.org/reports/tr29/) semantics."
+
+The mirror-image function is the clincher on §16.5. Going the other way — index to x — Pango asks the
+**font** first, and even division is reached only by a `goto` to a label literally named `fallback:`:
+
+> "The X position is measured from the left edge of the run. Character positions are obtained using
+> font metrics for ligatures where available, and computed by dividing up each cluster into equal
+> portions, otherwise."
+
+A mature engine treats even division as the degraded path. parley treats it as the method.
+
+### 16.7 Qt — subdivide, then jump to the next grapheme boundary
+
+Qt does the same subdivision as parley, then snaps. `QTextLine::xToCursor`'s own docs say nothing
+about clusters; the guarantee is documented on a neighbouring API:
+
+> "Returns \c true if position \a pos is a valid cursor position.
+>
+> In a Unicode context some positions in the text are not valid cursor positions, because the
+> position is inside a Unicode surrogate or a grapheme cluster.
+>
+> A grapheme cluster is a sequence of two or more Unicode characters that form one indivisible entity
+> on the screen. For example the latin character `\unicode{0xC4}' can be represented in Unicode by two
+> characters, `A' (0x41), and the combining diaeresis (0x308). A text cursor can only validly be
+> positioned before or after these two characters, never between them since that wouldn't make sense.
+> In indic languages every syllable forms a grapheme cluster."
+
+**"never between them since that wouldn't make sense"** is the sharpest sentence in this section, and
+it is precisely the position `latin_e_combining_acute` measures parley reaching by click (index 1,
+both affinities).
+
+Behaviourally (described, not transcribed — Qt is a licence hazard, see §3): every non-trivial return
+path of `xToCursor` ends in `QTextEngine::positionInLigature`, which for simple scripts divides the
+chosen glyph's advance evenly among the grapheme-boundary offsets that map to it, picks the nearest,
+and then advances forward until it lands on an offset whose `graphemeBoundary` attribute is true —
+the inline comment there reads `// Jump to the next grapheme boundary`. The `CursorOnCharacter` /
+`CursorBetweenCharacters` flag only biases which subdivision is chosen; it does not bypass the snap.
+Qt's decision is **font-independent**: `graphemeBoundary` comes from the text, not the shaping result.
+
+So Qt's caret *can* sit visually inside a rendered **ligature glyph** (that is what the subdivision is
+for — `f`|`i` are two graphemes), but *cannot* sit inside a **grapheme cluster**. That distinction is
+exactly the `mid_egc` column of `click_reachability.md`.
+
+### 16.8 Android — the same snap, but font-*dependent*
+
+Android's public hit-test entry point is equally silent —
+
+> "Get the character offset on the specified line whose position is closest to the specified
+> horizontal position."
+
+— and, like Qt, documents the guarantee elsewhere:
+
+> "Returns the next cursor position in the run.
+>
+> This avoids placing the cursor between surrogates, between characters that form conjuncts, between
+> base characters and combining marks, or within a reordering cluster."
+
+"between base characters and combining marks" is the `latin_e_combining_acute` case again, and
+`Paint.CURSOR_AT` returning `-1` for an invalid offset proves Android has offsets that are not cursor
+positions at all.
+
+The nuance worth recording: **minikin's grapheme breaking is font-dependent.** Its own comments:
+
+> "// This is used to decide font-dependent grapheme clusters. If we don't have the advance
+> information, we become conservative in grapheme breaking and assume that it has no advance."
+
+> "// All the following rules are font-dependent, in the way that if we know c2 has an advance, we
+> definitely know that it cannot form a grapheme with the character(s) before it. So we make the
+> decision in favor a grapheme break early."
+
+So on Android, whether you can click inside a ZWJ emoji sequence **depends on whether the font
+actually ligated it**: if the font renders it as one glyph you cannot, and if fallback renders the
+components separately you can. Android deliberately trades UAX #29 conformance for matching what the
+user sees. This is directly relevant to parley's `[Tofu]` rows — Android would *agree* with parley on
+an unsupported emoji, and disagree on a supported one.
+
+### ⭐ 16.9 The browsers — and the one-word difference
+
+**The W3C requires nothing.** CSSOM View defines `caretPositionFromPoint()` and then disclaims the
+substance of it:
+
+> "Note: The specifics of hit testing are out of scope of this specification and therefore the exact
+> details of elementFromPoint() and caretPositionFromPoint() are therefore too. Hit testing will
+> hopefully be defined in a future revision of CSS or HTML."
+
+`caretPositionOffset` is constrained only to be "a non-negative integer", and the offset unit is
+UTF-16 code units. The words "grapheme" and "cluster" each appear **exactly once** in the whole spec
+— in `Range.getClientRects()`, not in caret hit testing:
+
+> "If the range covers a partial typographic character unit (e.g. half a surrogate pair or part of a
+> grapheme cluster), the full typographic character unit must be included for the purpose of
+> computing the bounds of the relevant DOMRect."
+
+The CSSWG plainly knew how to write a grapheme-cluster **must** and wrote one for rect bounds, and
+none for `caretPositionFromPoint`. So the browsers' agreement below is **convention, not
+conformance** — three engines converging with nothing obliging them to.
+
+#### ⭐ Blink — parley's algorithm with one word changed
+
+Blink subdivides a ligature exactly as parley does. Its option for it is even named after the idea:
+
+> "// BreakGlyphsOption - allows OffsetForPosition to consider graphemes
+> // separations inside a glyph. It allows the function to return a point inside
+> // a glyph when multiple graphemes share a glyph (for example, in a ligature)"
+
+**And here is the entire difference between Blink and parley:**
+
+> `glyph_sequence_advance = glyph_sequence_advance / graphemes;`
+
+**Blink divides by `graphemes`. parley divides by `characters`.** That single substitution is the
+whole of §16.1, expressed as one line of arithmetic:
+
+- `fi` — 2 graphemes, 2 characters. Blink subdivides; parley subdivides. **They agree.**
+- `e` + combining acute — **1 grapheme**, 2 characters. Blink's subdivision is guarded by
+  `if (graphemes > 1)` and does not run, so the offset stays pinned to the glyph-sequence boundary.
+  parley divides by 2 and offers index 1. **They diverge.**
+- 👨‍👩‍👧‍👦 — 1 grapheme, 7 characters. Blink: no subdivision. parley: six interior positions.
+
+Blink's grapheme count is UAX #29 and comes from the **string**, not the shaping result
+(`EnsureGraphemes` → `GraphemesClusterList` → `CharacterBreakIterator`, documented as *"Iterates over
+"extended grapheme clusters", as defined in UAX #29."*), so it is font-independent. And the hit-test
+entry point can only ever return a boundary — `CaretOffsetForHitTest` returns
+`result.left_character_index` or `result.right_character_index`, with no path to an intermediate
+offset.
+
+#### Gecko — cluster starts, computed before shaping
+
+Gecko never even generates a candidate mid-cluster offset: its hit-test scan advances only at
+`IsClusterStart()` positions, and the midpoint test chooses between a cluster's start and its end —
+the comment reads *"See if we're more than halfway through the cluster.. If we are, choose the next
+cluster."* The load-bearing fact is what a Gecko "cluster" **is**: cluster-start flags are set in
+`gfxShapedText::SetupClusterBoundaries` from `GraphemeClusterBreakIteratorUtf16`, i.e. from **Unicode
+grapheme breaking before shaping**, not from HarfBuzz cluster values. So it is font-independent, and
+where Gecko deviates from UAX #29 it deviates *coarser* (a Bengali virama tailoring), never finer.
+
+Gecko also has a special case worth recording, because it is the emoji question in miniature:
+
+> "    bool allowSplitLigature = true;  // Allow selection of partial ligature...
+>
+>     // ...but don't let selection/insertion-point split two Regional Indicator
+>     // chars that are ligated in the textrun to form a single flag symbol."
+
+Partial ligatures allowed; flags protected. Cluster integrity is unconditional, ligature splitting is
+opt-out — two independent axes, exactly the distinction `ExpectedOutcome::FontProvidedLigatureCaret`
+draws.
+
+#### WebKit — the snap, and the FIXME that names the fix
+
+WebKit computes a raw interpolated `hitIndex` and then immediately forces it back to a boundary via a
+caret-mode break iterator, which resolves to ICU `UBRK_CHARACTER` — extended grapheme clusters again,
+reached independently. Every return path yields `clusterStart` or `clusterEnd`.
+
+And WebKit says out loud what §16.5 argues:
+
+> "// FIXME: Instead of dividing the glyph's advance equally between the characters, this
+> // could use the glyph's "ligature carets". This is available in CoreText via CTFontGetLigatureCaretPositions()."
+
+Three engines, three independent codebases, the same approximation, and the one that commented on it
+filed a FIXME against it pointing at font-provided carets. **parley is not unusual for dividing
+evenly — it is unusual for not snapping afterwards, and for dividing by characters instead of
+graphemes.**
+
+⚠ **One Blink path was deliberately not written up.** The researcher found arithmetic in
+`CharacterIndexForXPosition` that adds a *grapheme* count to a *character* index, which could in
+principle land between code units when graphemes of unequal code-unit length share one glyph
+sequence. That is a **code-reading inference, not an observation**, and this harness exists because
+code-reading inferences were wrong three times. It is recorded here as a question for a browser test
+that prints an offset — not as a finding.
+
+### 16.10 Consolidated
+
+Modality is per-source; ⚠ marks an inference rather than a quote.
+
+| authority | may a click land inside a grapheme cluster? | modality |
+|---|---|---|
+| UAX #29 | does not say; delegates to "the text editing framework" | Observed |
+| Unicode core spec §5.11 | **yes** — "Nonlinear Boundaries", one of three listed options | Permitted, explicitly non-normative |
+| UTS #51 C2b | ⚠ inference only; "editing purposes" never defined, pointing never named | capability, and optional |
+| CSSOM View | explicitly **out of scope** | non-normative note |
+| OpenType GDEF | yes inside a **ligature**, but at font-provided carets; midpoint "might be ambiguous" | Recommended |
+| Pango | **no** — public API returns grapheme start + trailing ∈ {0, len} | Observed |
+| Qt | **no** — "never between them since that wouldn't make sense" | Observed |
+| Android | **no**, but font-dependently so | Observed |
+| Blink | **no** — subdivides by `graphemes`, guarded by `if (graphemes > 1)` | Observed |
+| Gecko | **no** — candidates are `IsClusterStart` positions only | Observed |
+| WebKit | **no** — raw hit index snapped to `clusterStart`/`clusterEnd` | Observed |
+| parley | **yes** — the only one. Measured; see `click_reachability.md`, `mid_egc` column | measured |
+
+**Nine implementations, zero permit it. Every standard that could require otherwise declines to.**
+That is the shape of this row: parley is not violating a conformance clause, it is alone against a
+unanimous convention — the mirror image of §15's backspace table, where the references genuinely
+conflict and parley picking a side is a defensible choice. Here they do not conflict.
+
+### 16.11 What is actually open for parley
+
+Stated as questions, not answers — issue #694 decides:
+
+1. **The divisor.** Blink divides a shared glyph's advance by **graphemes**; parley divides by
+   **characters**. This is the smallest possible statement of the divergence and probably the
+   smallest possible fix. It changes nothing for `fi` (2 graphemes, 2 chars) and everything for
+   `e`+U+0301 and every emoji sequence.
+2. **The snap.** Every surveyed engine has one; parley does not. Adding it to `Cursor::from_point`
+   while leaving `Cluster::from_point` unsnapped would exactly reproduce Pango's public/private
+   split — and parley already has both layers, which is what makes this cheap.
+3. **The method, if intra-ligature carets are kept.** Even division is the documented fallback
+   everywhere; GDEF is the documented answer, and WebKit's FIXME names it. parley reads no GDEF at
+   all, and one bundled font already ships the data.
+4. **The obligation that comes with §5.11's nonlinear option** — highlighting a partial cluster with
+   multiple rectangles. If parley keeps mid-cluster carets, this is the other half of the package,
+   and `Cursor::geometry` is where it would land.
+5. **Font-dependence is a real fork, not a detail.** Blink, Gecko and Qt compute cluster boundaries
+   from the **string** before shaping; Android computes them from **glyph advances** after. parley's
+   clusters come from shaping. On a `[Tofu]` emoji — no font support — Android would *agree* with
+   parley and the browsers would not. The corpus is mostly tofu at the bundled tier, so this
+   distinction decides how `click_reachability.md`'s emoji rows should be read.
+6. **`emoji_zwj_family` is the row to argue about.** Six interior click positions, every one a ZWJ
+   seam with nothing on screen to indicate it exists. Whatever C2b does or does not require of hit
+   testing, that is the row a user files a bug about.
+
+---
+
+## 17. Source index
 
 **Standards** · [UAX #29](https://www.unicode.org/reports/tr29/) ·
 [UTS #51](https://www.unicode.org/reports/tr51/) ·
 [GraphemeBreakProperty.txt](https://www.unicode.org/Public/UCD/latest/ucd/auxiliary/GraphemeBreakProperty.txt) ·
 [Unicode 15.1](https://www.unicode.org/versions/Unicode15.1.0/) ·
 [CSS Text 3](https://www.w3.org/TR/css-text-3/#typographic-character-unit)
+
+**Hit testing (§16)** · [Unicode core spec ch. 5 §5.11 "Editing and Selection"](https://www.unicode.org/versions/Unicode16.0.0/core-spec/chapter-5/) —
+the only Unicode text on pointing, and explicitly non-normative ·
+[OpenType GDEF `LigCaretList`](https://learn.microsoft.com/en-us/typography/opentype/spec/gdef) ·
+[HarfBuzz `hb_ot_layout_get_ligature_carets`](https://harfbuzz.github.io/harfbuzz-hb-ot-layout.html) ·
+[HarfBuzz clusters](https://harfbuzz.github.io/clusters.html) ·
+[CSSOM View `caretPositionFromPoint`](https://drafts.csswg.org/cssom-view/#dom-document-caretpositionfrompoint) —
+declares hit testing out of scope ·
+[Pango `Layout.xy_to_index`](https://docs.gtk.org/Pango/method.Layout.xy_to_index.html) ·
+[Pango `GlyphString.x_to_index`](https://docs.gtk.org/Pango/method.GlyphString.x_to_index.html) —
+the even-division primitive ·
+[Qt `isValidCursorPosition`](https://doc.qt.io/qt-6/qtextlayout.html#isValidCursorPosition) ·
+[Qt `xToCursor`](https://doc.qt.io/qt-6/qtextline.html#xToCursor) ·
+[Android `Paint.getTextRunCursor`](https://developer.android.com/reference/android/graphics/Paint) ·
+[minikin `GraphemeBreak.h`](https://android.googlesource.com/platform/frameworks/minikin/+/refs/heads/main/include/minikin/GraphemeBreak.h) ·
+[Blink `shape_result.h`](https://chromium.googlesource.com/chromium/src/+/main/third_party/blink/renderer/platform/fonts/shaping/shape_result.h) ·
+[Gecko `nsTextFrame.cpp`](https://searchfox.org/mozilla-central/source/layout/generic/nsTextFrame.cpp) ·
+[WebKit `ComplexTextController.cpp`](https://github.com/WebKit/WebKit/blob/main/Source/WebCore/platform/graphics/ComplexTextController.cpp)
 
 **UTC / CLDR** · [L2/23-140 Lindenberg](https://www.unicode.org/L2/L2023/23140-graphemes-expectations.pdf) ·
 [L2/11-114 Hosken](https://www.unicode.org/L2/L2011/11114-uax29-changes.pdf) ·
