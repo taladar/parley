@@ -13,9 +13,20 @@ use core::{
 };
 
 use crate::editing::{Cursor, Selection};
+use crate::inline_box::InlineBox;
 use crate::layout::{Affinity, Alignment, AlignmentOptions, Layout};
 use crate::style::Brush;
 use crate::{BoundingBox, FontContext, LayoutContext, StyleProperty, StyleSet};
+
+/// Whether `range` is a non-empty byte range of `text` that starts and ends on
+/// character boundaries — the precondition a range style must meet before it is
+/// handed to the layout builder.
+fn is_valid_range(text: &str, range: &Range<usize>) -> bool {
+    range.start < range.end
+        && range.end <= text.len()
+        && text.is_char_boundary(range.start)
+        && text.is_char_boundary(range.end)
+}
 
 #[cfg(feature = "accesskit")]
 use crate::layout::LayoutAccessibility;
@@ -25,10 +36,7 @@ use accesskit::{Node, NodeId, TreeUpdate};
 /// The byte offset of the last grapheme-cluster boundary strictly before the end
 /// of `text`, i.e. the start of the grapheme a backspace at the end should
 /// remove. Returns `None` for empty text.
-fn previous_grapheme_boundary<B: Brush>(
-    layout_cx: &LayoutContext<B>,
-    text: &str,
-) -> Option<usize> {
+fn previous_grapheme_boundary<B: Brush>(layout_cx: &LayoutContext<B>, text: &str) -> Option<usize> {
     if text.is_empty() {
         return None;
     }
@@ -135,6 +143,12 @@ where
     /// Byte offsets of IME composing preedit text in the text buffer.
     /// `None` if the IME is not currently composing.
     compose: Option<Range<usize>>,
+    /// Boxes laid out inline with the text, each anchored at a byte offset into
+    /// the buffer. Empty for a pure plain-text editor.
+    inline_boxes: Vec<InlineBox>,
+    /// Style properties applied to byte ranges of the buffer, on top of
+    /// [`PlainEditor::edit_styles`]. Empty for a uniformly styled editor.
+    range_styles: Vec<(Range<usize>, StyleProperty<'static, T>)>,
     /// Whether the cursor should be shown. The IME can request to hide the cursor.
     show_cursor: bool,
     width: Option<f32>,
@@ -169,6 +183,8 @@ where
             layout_access: LayoutAccessibility::default(),
             selection: Selection::default(),
             compose: None,
+            inline_boxes: Vec::new(),
+            range_styles: Vec::new(),
             show_cursor: true,
             width: None,
             font_size,
@@ -1052,6 +1068,55 @@ where
         self.layout_dirty = true;
     }
 
+    /// Set the boxes laid out inline with the text.
+    ///
+    /// Each box is anchored at a byte offset into the buffer and reserves its
+    /// own width and height in the flow, so an embedded object (an image, an
+    /// inventory item, a widget) can sit *in* the text rather than beside it.
+    /// The caller owns the offsets: an edit that moves the text moves them, so
+    /// they are normally recomputed from the buffer after each edit.
+    ///
+    /// A box whose index is past the end of the buffer, or not on a UTF-8
+    /// character boundary, is **ignored** when the layout is built rather than
+    /// panicking there: a caller whose offsets lag one edit behind the buffer
+    /// loses its boxes for that frame instead of the whole editor.
+    ///
+    /// The layout is only invalidated when the boxes actually change, so this
+    /// can be called unconditionally.
+    pub fn set_inline_boxes(&mut self, inline_boxes: Vec<InlineBox>) {
+        if self.inline_boxes != inline_boxes {
+            self.inline_boxes = inline_boxes;
+            self.layout_dirty = true;
+        }
+    }
+
+    /// The boxes laid out inline with the text, as last set.
+    pub fn inline_boxes(&self) -> &[InlineBox] {
+        &self.inline_boxes
+    }
+
+    /// Set style properties applied to byte ranges of the buffer, on top of the
+    /// editor's default styles ([`PlainEditor::edit_styles`]).
+    ///
+    /// This is what makes a *rich* editor possible over this type: a syntax
+    /// highlighter colours token ranges, a hyperlink underlines its own, all
+    /// while the buffer and the cursor stay the plain editor's.
+    ///
+    /// The same offset rules as [`PlainEditor::set_inline_boxes`] apply: a range
+    /// that is out of bounds or off a character boundary is ignored rather than
+    /// panicking, and the layout is only invalidated on a real change.
+    pub fn set_range_styles(&mut self, styles: Vec<(Range<usize>, StyleProperty<'static, T>)>) {
+        if self.range_styles != styles {
+            self.range_styles = styles;
+            self.layout_dirty = true;
+        }
+    }
+
+    /// The per-range style properties, as last set.
+    pub fn range_styles(&self) -> &[(Range<usize>, StyleProperty<'static, T>)] {
+        &self.range_styles
+    }
+
     /// Modify the styles provided for this editor.
     pub fn edit_styles(&mut self) -> &mut StyleSet<T> {
         self.layout_dirty = true;
@@ -1255,8 +1320,18 @@ where
         for prop in self.default_style.inner().values() {
             builder.push_default(prop.to_owned());
         }
+        for (range, property) in &self.range_styles {
+            if is_valid_range(&self.buffer, range) {
+                builder.push(property.clone(), range.clone());
+            }
+        }
         if let Some(preedit_range) = &self.compose {
             builder.push(StyleProperty::Underline(true), preedit_range.clone());
+        }
+        for inline_box in &self.inline_boxes {
+            if self.buffer.is_char_boundary(inline_box.index) {
+                builder.push_inline_box(inline_box.clone());
+            }
         }
         self.layout = builder.build(&self.buffer);
         self.layout.break_all_lines(self.width);

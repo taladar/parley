@@ -12,7 +12,8 @@ use super::layout::Layout;
 use super::resolve::{ResolveContext, Resolved, ResolvedStyle};
 use super::style::{Brush, FontFeature, FontVariation};
 use crate::analysis::cluster::{
-    Char, CharCluster, EMOJI_PRESENTATION_SELECTOR, Presentation, Status, TEXT_PRESENTATION_SELECTOR,
+    Char, CharCluster, EMOJI_PRESENTATION_SELECTOR, Presentation, Status,
+    TEXT_PRESENTATION_SELECTOR,
 };
 use crate::analysis::{AnalysisDataSources, CharInfo};
 use crate::convert::script_to_harfrust;
