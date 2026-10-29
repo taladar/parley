@@ -1083,42 +1083,11 @@ impl<'a, B: Brush> BreakLines<'a, B> {
         line.metrics.leading =
             line.metrics.line_height - (line.metrics.ascent + line.metrics.descent);
 
-        // Whether metrics should be quantized to pixel boundaries
-        let quantize = self.layout.data.quantize;
-
-        let (ascent, descent) = if quantize {
-            // We mimic Chrome in rounding ascent and descent separately,
-            // before calculating the rest.
-            // See lines_integral_line_height_ascent_descent_rounding() for more details.
-            (line.metrics.ascent.round(), line.metrics.descent.round())
-        } else {
-            (line.metrics.ascent, line.metrics.descent)
-        };
-
-        let (leading_above, leading_below) = if quantize {
-            // Calculate leading using the rounded ascent and descent.
-            let leading = line.metrics.line_height - (ascent + descent);
-            // We mimic Chrome in giving 'below' the larger leading half.
-            // Although the comment in Chromium's NGLineHeightMetrics::AddLeading function
-            // in ng_line_height_metrics.cc claims it's for legacy test compatibility.
-            // So we might want to think about giving 'above' the larger half instead.
-            let above = (leading * 0.5).floor();
-            let below = leading.round() - above;
-            (above, below)
-        } else {
-            (line.metrics.leading * 0.5, line.metrics.leading * 0.5)
-        };
-
-        let y = self.state.line_y;
-        line.metrics.baseline =
-            ascent + leading_above + if quantize { y.round() as f32 } else { y as f32 };
-
-        // Small line heights will cause leading to be negative.
-        // Negative leadings are correct for baseline calculation, but not for min/max coords.
-        // We clamp leading to zero for the purposes of min/max coords,
-        // which in turn clamps the selection box minimum height to ascent + descent.
-        line.metrics.block_min_coord = line.metrics.baseline - ascent - leading_above.max(0.);
-        line.metrics.block_max_coord = line.metrics.baseline + descent + leading_below.max(0.);
+        place_line(
+            &mut line.metrics,
+            self.state.line_y,
+            self.layout.data.quantize,
+        );
 
         // let max_advance = if self.state.line_max_advance < f32::MAX {
         //     self.state.line_max_advance
@@ -1129,6 +1098,46 @@ impl<'a, B: Brush> BreakLines<'a, B> {
         line.metrics.inline_min_coord = self.state.line_x;
         line.metrics.inline_max_coord = self.state.line_x + self.state.line_max_advance;
     }
+}
+
+/// Place a finished line vertically: its baseline and block extent, for a line
+/// whose top is `y` in the layout (the sum of the line heights above it).
+///
+/// Shared by line breaking and by [`crate::layout::concat`], which stacks
+/// separately broken paragraphs and must place each of their lines exactly as
+/// breaking the whole text would have.
+pub(crate) fn place_line(metrics: &mut LineMetrics, y: f64, quantize: bool) {
+    let (ascent, descent) = if quantize {
+        // We mimic Chrome in rounding ascent and descent separately,
+        // before calculating the rest.
+        // See lines_integral_line_height_ascent_descent_rounding() for more details.
+        (metrics.ascent.round(), metrics.descent.round())
+    } else {
+        (metrics.ascent, metrics.descent)
+    };
+
+    let (leading_above, leading_below) = if quantize {
+        // Calculate leading using the rounded ascent and descent.
+        let leading = metrics.line_height - (ascent + descent);
+        // We mimic Chrome in giving 'below' the larger leading half.
+        // Although the comment in Chromium's NGLineHeightMetrics::AddLeading function
+        // in ng_line_height_metrics.cc claims it's for legacy test compatibility.
+        // So we might want to think about giving 'above' the larger half instead.
+        let above = (leading * 0.5).floor();
+        let below = leading.round() - above;
+        (above, below)
+    } else {
+        (metrics.leading * 0.5, metrics.leading * 0.5)
+    };
+
+    metrics.baseline = ascent + leading_above + if quantize { y.round() as f32 } else { y as f32 };
+
+    // Small line heights will cause leading to be negative.
+    // Negative leadings are correct for baseline calculation, but not for min/max coords.
+    // We clamp leading to zero for the purposes of min/max coords,
+    // which in turn clamps the selection box minimum height to ascent + descent.
+    metrics.block_min_coord = metrics.baseline - ascent - leading_above.max(0.);
+    metrics.block_max_coord = metrics.baseline + descent + leading_below.max(0.);
 }
 
 impl<B: Brush> Drop for BreakLines<'_, B> {

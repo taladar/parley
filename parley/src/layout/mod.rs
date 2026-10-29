@@ -7,6 +7,7 @@
 mod accessibility;
 mod alignment;
 mod cluster;
+pub(crate) mod concat;
 mod glyph;
 mod line;
 mod line_break;

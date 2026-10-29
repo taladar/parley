@@ -3,6 +3,7 @@
 
 mod cursor;
 mod editor;
+mod paragraphs;
 mod selection;
 
 pub use self::cursor::*;

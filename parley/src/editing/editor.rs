@@ -167,6 +167,12 @@ where
     // alignment_dirty: bool,
     alignment: Alignment,
     generation: Generation,
+    /// Each paragraph's last layout, so a relayout re-shapes only the
+    /// paragraphs that changed (see `paragraphs`).
+    paragraphs: super::paragraphs::ParagraphCache<T>,
+    /// Bumped whenever the default styles are handed out for editing, which
+    /// invalidates every kept paragraph.
+    style_generation: u64,
 }
 
 impl<T> PlainEditor<T>
@@ -196,6 +202,8 @@ where
             // will choose to use that as their initial value, but will probably need
             // to redraw if they haven't already.
             generation: Generation(1),
+            paragraphs: super::paragraphs::ParagraphCache::default(),
+            style_generation: 0,
         }
     }
 }
@@ -242,7 +250,7 @@ where
         if range.is_empty() || !self.editor.buffer.is_char_boundary(range.start) {
             return;
         }
-        self.editor.buffer.replace_range(range.clone(), "");
+        self.editor.splice(range.clone(), "");
         self.editor
             .update_compose_for_replaced_range(range.clone(), 0);
         self.update_layout();
@@ -284,7 +292,7 @@ where
         if range.is_empty() || !self.editor.buffer.is_char_boundary(range.end) {
             return;
         }
-        self.editor.buffer.replace_range(range.clone(), "");
+        self.editor.splice(range.clone(), "");
         self.editor.update_compose_for_replaced_range(range, 0);
         self.update_layout();
     }
@@ -296,7 +304,7 @@ where
             let start = self.editor.selection.focus().index();
             if let Some(end) = next_grapheme_boundary(self.layout_cx, &self.editor.buffer, start) {
                 let range = start..end;
-                self.editor.buffer.replace_range(range.clone(), "");
+                self.editor.splice(range.clone(), "");
                 self.editor.update_compose_for_replaced_range(range, 0);
                 self.update_layout();
             }
@@ -312,7 +320,7 @@ where
             let start = focus.index();
             let end = focus.next_logical_word(&self.editor.layout).index();
             if self.editor.buffer.get(start..end).is_some() {
-                self.editor.buffer.replace_range(start..end, "");
+                self.editor.splice(start..end, "");
                 self.editor.update_compose_for_replaced_range(start..end, 0);
                 self.update_layout();
                 self.editor.set_selection(
@@ -349,7 +357,7 @@ where
                 else {
                     return;
                 };
-                self.editor.buffer.replace_range(start..end, "");
+                self.editor.splice(start..end, "");
                 self.editor.update_compose_for_replaced_range(start..end, 0);
                 self.update_layout();
                 self.editor.set_selection(
@@ -369,7 +377,7 @@ where
             let end = focus.index();
             let start = focus.previous_logical_word(&self.editor.layout).index();
             if self.editor.buffer.get(start..end).is_some() {
-                self.editor.buffer.replace_range(start..end, "");
+                self.editor.splice(start..end, "");
                 self.editor.update_compose_for_replaced_range(start..end, 0);
                 self.update_layout();
                 self.editor.set_selection(
@@ -399,20 +407,17 @@ where
         debug_assert!(!text.is_empty());
         debug_assert!(cursor.map(|cursor| cursor.1 <= text.len()).unwrap_or(true));
 
-        let start = if let Some(preedit_range) = &self.editor.compose {
-            self.editor
-                .buffer
-                .replace_range(preedit_range.clone(), text);
-            preedit_range.start
+        let start = if let Some(preedit_range) = self.editor.compose.clone() {
+            let start = preedit_range.start;
+            self.editor.splice(preedit_range, text);
+            start
         } else {
             if self.editor.selection.is_collapsed() {
-                self.editor
-                    .buffer
-                    .insert_str(self.editor.selection.text_range().start, text);
+                let at = self.editor.selection.text_range().start;
+                self.editor.splice(at..at, text);
             } else {
-                self.editor
-                    .buffer
-                    .replace_range(self.editor.selection.text_range(), text);
+                let range = self.editor.selection.text_range();
+                self.editor.splice(range, text);
             }
             self.editor.selection.text_range().start
         };
@@ -447,7 +452,7 @@ where
     /// and moves the cursor to the start of the former preedit region.
     pub fn clear_compose(&mut self) {
         if let Some(preedit_range) = self.editor.compose.take() {
-            self.editor.buffer.replace_range(preedit_range.clone(), "");
+            self.editor.splice(preedit_range.clone(), "");
             self.editor.show_cursor = true;
             self.update_layout();
 
@@ -1120,6 +1125,7 @@ where
     /// Modify the styles provided for this editor.
     pub fn edit_styles(&mut self) -> &mut StyleSet<T> {
         self.layout_dirty = true;
+        self.style_generation = self.style_generation.wrapping_add(1);
         &mut self.default_style
     }
 
@@ -1247,6 +1253,59 @@ where
         }
     }
 
+    /// Replace `range` of the buffer with `text`, and move the range styles and
+    /// inline boxes with the text, the way any editor's marks follow it:
+    /// whatever lies after the edit shifts by the change in length, a range the
+    /// edit cuts into is clipped to what is left of it, and a box whose anchor
+    /// the edit deleted goes with it.
+    ///
+    /// The marks matter beyond their own correctness. A consumer that
+    /// recomputes its styles after an edit hands them over *after* the edit
+    /// relaid the buffer out, so that relayout ran on whatever the editor held;
+    /// with the styles still at their old offsets every paragraph after the edit
+    /// looked restyled, and the paragraph cache (`paragraphs`) laid them all out
+    /// again — twice. Moved with the text, they match, and only the edited
+    /// paragraph is shaped.
+    fn splice(&mut self, range: Range<usize>, text: &str) {
+        let (start, end) = (range.start, range.end);
+        self.buffer.replace_range(range, text);
+        let inserted = text.len();
+        // A position after the edit moves with it; one inside it lands at the
+        // edit's start (an end) or after the inserted text (a start).
+        let after = |position: usize| position - end + start + inserted;
+        let map_start = |position: usize| {
+            if position < start {
+                position
+            } else if position >= end {
+                after(position)
+            } else {
+                start + inserted
+            }
+        };
+        let map_end = |position: usize| {
+            if position <= start {
+                position
+            } else if position >= end {
+                after(position)
+            } else {
+                start
+            }
+        };
+        self.range_styles.retain_mut(|(styled, _property)| {
+            let moved = map_start(styled.start)..map_end(styled.end);
+            *styled = moved;
+            styled.start < styled.end
+        });
+        self.inline_boxes.retain_mut(|inline_box| {
+            let index = inline_box.index;
+            if index >= start && index < end {
+                return false;
+            }
+            inline_box.index = if index < start { index } else { after(index) };
+            true
+        });
+    }
+
     fn replace_selection(
         &mut self,
         font_cx: &mut FontContext,
@@ -1255,11 +1314,7 @@ where
     ) {
         let range = self.selection.text_range();
         let start = range.start;
-        if self.selection.is_collapsed() {
-            self.buffer.insert_str(start, s);
-        } else {
-            self.buffer.replace_range(range.clone(), s);
-        }
+        self.splice(range.clone(), s);
         self.update_compose_for_replaced_range(range, s.len());
 
         self.update_layout(font_cx, layout_cx);
@@ -1315,6 +1370,39 @@ where
     }
     /// Update the layout.
     fn update_layout(&mut self, font_cx: &mut FontContext, layout_cx: &mut LayoutContext<T>) {
+        let inputs = super::paragraphs::Inputs {
+            text: &self.buffer,
+            defaults: &self.default_style,
+            range_styles: &self.range_styles,
+            inline_boxes: &self.inline_boxes,
+            compose: self.compose.clone(),
+            settings: super::paragraphs::ParagraphSettings {
+                width: self.width,
+                scale: self.scale,
+                quantize: self.quantize,
+                style_generation: self.style_generation,
+            },
+            alignment: self.alignment,
+        };
+        if self
+            .paragraphs
+            .relayout(&mut self.layout, &inputs, font_cx, layout_cx)
+        {
+            self.selection = self.selection.refresh(&self.layout);
+            self.layout_dirty = false;
+            self.generation.nudge();
+            return;
+        }
+        self.update_layout_whole(font_cx, layout_cx);
+    }
+
+    /// Lay the whole buffer out in one pass — what a relayout does when the
+    /// paragraph cache cannot (see `paragraphs`).
+    pub(crate) fn update_layout_whole(
+        &mut self,
+        font_cx: &mut FontContext,
+        layout_cx: &mut LayoutContext<T>,
+    ) {
         let mut builder =
             layout_cx.ranged_builder(font_cx, &self.buffer, self.scale, self.quantize);
         for prop in self.default_style.inner().values() {
